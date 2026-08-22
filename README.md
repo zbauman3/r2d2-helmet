@@ -11,13 +11,39 @@ A project for an R2D2 costume helmet.
 | Part                   | PID  | Role                                  |
 | ---------------------- | ---- | ------------------------------------- |
 | Adafruit KB2040        | 5302 | RP2040 MCU, Pro Micro form factor     |
-| Breadboard NeoPixel ×5 | 1312 | SK6812, dome lighting behind diffuser |
+| Breadboard NeoPixel ×2 | 1312 | SK6812, dome lighting behind diffuser |
 | STEMMA Speaker         | 3885 | PAM8302A class-D + 1 W 8 Ω speaker    |
 | 1.9" 320×170 IPS TFT   | 5394 | ST7789, logic display panel           |
-| EYESPI Breakout        | 5613 | Required — 5394 has no 0.1" header    |
-| EYESPI Cable 50 mm     | 5462 | 18-pin 0.5 mm FPC, A-B type           |
 
-Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, 1× 470 µF electrolytic.
+Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, 1× 470 µF
+electrolytic. Plus one momentary pushbutton (normally open) as the sound trigger —
+no resistor needed, the RP2040's internal pull-up handles it.
+
+Powered from a **USB power bank** into the KB2040's USB-C.
+
+The 5394 ships with a 1×11 0.1" header strip. Solder it and breadboard directly —
+the EYESPI FPC connector alongside it carries the same signals and goes unused, so
+no EYESPI breakout or cable is needed.
+
+### 5394 display header, pad 1 → 11
+
+Order verified against the net list in Adafruit's Eagle board file (`JP1`) and
+cross-checked against the guide's own breadboard wiring list. **Note `MISO` comes
+before `MOSI`** — the reverse of most Adafruit breakouts.
+
+| # | Silk   | Signal                                          |
+| - | ------ | ----------------------------------------------- |
+| 1 | `Vin`  | 3–5 V in — onboard LDO + level shifter          |
+| 2 | `3V`   | 3.3 V regulator **output**, ≥100 mA — leave free |
+| 3 | `Gnd`  | ground                                          |
+| 4 | `SCK`  | SPI clock                                       |
+| 5 | `MISO` | microSD only — **not used**, TFT is write-only   |
+| 6 | `MOSI` | SPI data in                                     |
+| 7 | `TCS`  | TFT chip select                                 |
+| 8 | `RST`  | TFT reset (auto-reset circuit onboard)          |
+| 9 | `DC`   | TFT data/command select                         |
+| 10 | `SDCS` | microSD chip select — **not used**             |
+| 11 | `Lite` | backlight enable — **pulled high, leave unconnected** |
 
 ### Pin assignments
 
@@ -32,18 +58,19 @@ Verified against `variants/adafruit_kb2040/pins_arduino.h` (arduino-pico) and
 | D7         | GP7  | 3B        | TFT D/C                   |
 | D4         | GP4  | 2A        | TFT reset                 |
 | D10        | GP10 | 5A        | TFT chip select           |
-| D9         | GP9  | 4B        | SD chip select (optional) |
+| D2         | GP2  | 1A        | Trigger button → GND      |
 | SCK        | GP18 | 1A        | TFT clock (SPI0)          |
 | MOSI       | GP19 | 1B        | TFT data (SPI0)           |
-| MISO       | GP20 | 2A        | SD data out (optional)    |
-| A2         | GP28 | 6A        | TFT backlight PWM         |
 
-Unused and free: D0/D1 (GP0/GP1, Serial1), D2/D3 (GP2/GP3, Wire1), A0/A1/A3
-(GP26/GP27/GP29), STEMMA QT port (GP12/GP13). GP11 is the onboard BOOT button and
-GP17 is the onboard NeoPixel — neither is castellated.
+Unused and free: D0/D1 (GP0/GP1, Serial1), D3 (GP3), D9 (GP9), MISO (GP20),
+A0–A3 (GP26/GP27/GP28/GP29), STEMMA QT port (GP12/GP13). GP11 is the onboard BOOT
+button and GP17 is the onboard NeoPixel — neither is castellated.
 
-`PWMAudio` claims all of PWM slice 4, so **GP9 must stay digital-only** — no
-`analogWrite()` on it.
+There is **no microSD in this build** — sounds are synthesized and the display
+draws primitives, so `MISO` and `SDCS` on the 5394 stay unwired.
+
+`PWMAudio` claims all of PWM slice 4, so **GP9 gets no `analogWrite()`** if it's
+ever pressed into service.
 
 ---
 
@@ -56,12 +83,12 @@ The KB2040 is Pro Micro shaped: 12 castellated pads per edge, USB-C at the top.
 ```
               USB-C
         ┌───────────────┐
-  D0/TX │1           24│ RAW      <- 5V from USB, fused
+  D0/TX │1           24│ RAW      <- 5V from USB, 500mA polyfuse
   D1/RX │2           23│ GND
     GND │3           22│ RST
     GND │4           21│ 3V       <- 3.3V reg out, 500 mA
      D2 │5           20│ A3
-     D3 │6           19│ A2       <- TFT backlight
+     D3 │6           19│ A2
      D4 │7           18│ A1
      D5 │8           17│ A0
      D6 │9           16│ SCK
@@ -71,6 +98,9 @@ The KB2040 is Pro Micro shaped: 12 castellated pads per edge, USB-C at the top.
         └───────────────┘
          STEMMA QT on end (GP12/GP13)
 ```
+
+`D2` sits two pads from the pair of `GND` pins, which is why the trigger button
+lands there — it's a short hop on the breadboard.
 
 ### Full schematic
 
@@ -95,12 +125,10 @@ flowchart TB
     P_D5["<b>D5</b> · GP5"]
     P_SCK["<b>SCK</b> · GP18"]
     P_MOSI["<b>MOSI</b> · GP19"]
-    P_MISO["<b>MISO</b> · GP20"]
     P_D7["<b>D7</b> · GP7"]
     P_D4["<b>D4</b> · GP4"]
     P_D10["<b>D10</b> · GP10"]
-    P_D9["<b>D9</b> · GP9"]
-    P_A2["<b>A2</b> · GP28<br/>PWM slice 6A"]
+    P_D2["<b>D2</b> · GP2"]
   end
 
   %% ============ AUDIO ============
@@ -139,19 +167,13 @@ flowchart TB
   S_GND --> GND
 
   %% ============ NEOPIXELS ============
-  subgraph NPX["💡 NeoPixel chain · 5× SK6812"]
+  subgraph NPX["💡 NeoPixel chain · 2× SK6812"]
     direction LR
     R3["R3<br/>470 Ω"]
     CB2["C_bulk<br/>100 µF"]
     NP1["Pixel 1<br/>DIN→DOUT"]
-    NP2["Pixel 2"]
-    NP3["Pixel 3"]
-    NP4["Pixel 4"]
-    NP5["Pixel 5<br/><i>DOUT unused</i>"]
+    NP2["Pixel 2<br/><i>DOUT unused</i>"]
     NP1 -->|"DOUT→DIN"| NP2
-    NP2 -->|"DOUT→DIN"| NP3
-    NP3 -->|"DOUT→DIN"| NP4
-    NP4 -->|"DOUT→DIN"| NP5
   end
 
   P_D5 -->|"800 kHz data<br/>3.3 V logic"| R3
@@ -161,46 +183,54 @@ flowchart TB
   CB2 --> GND
 
   %% ============ DISPLAY ============
-  subgraph DISP["🖥️ Logic display"]
+  subgraph DISP["🖥️ Logic display · Adafruit 5394"]
     direction TB
-    subgraph EYE["EYESPI Breakout 5613 · 0.1in header"]
+    subgraph HDR["1×11 0.1in header · solder the included strip"]
       direction TB
-      E_VIN["<b>Vin</b>"]
-      E_GND["<b>Gnd</b>"]
-      E_SCK["<b>SCK</b>"]
-      E_MOSI["<b>MOSI</b>"]
-      E_MISO["<b>MISO</b>"]
-      E_DC["<b>DC</b>"]
-      E_RST["<b>RST</b>"]
-      E_TCS["<b>TCS</b>"]
-      E_SDCS["<b>SDCS</b>"]
-      E_LITE["<b>Lite</b>"]
+      E_VIN["1 · <b>Vin</b>"]
+      E_3V["2 · <b>3V</b><br/><i>regulator OUT — leave free</i>"]
+      E_GND["3 · <b>Gnd</b>"]
+      E_SCK["4 · <b>SCK</b>"]
+      E_MISO["5 · <b>MISO</b><br/><i>no microSD — unwired</i>"]
+      E_MOSI["6 · <b>MOSI</b>"]
+      E_TCS["7 · <b>TCS</b>"]
+      E_RST["8 · <b>RST</b>"]
+      E_DC["9 · <b>DC</b>"]
+      E_SDCS["10 · <b>SDCS</b><br/><i>no microSD — unwired</i>"]
+      E_LITE["11 · <b>Lite</b><br/><i>pulled high — leave floating</i>"]
     end
-    TFT["<b>Adafruit 5394</b><br/>1.9in 320×170 IPS · ST7789<br/>visible area 46 × 25 mm<br/>onboard 3.3 V LDO + level shifter<br/>microSD slot"]
-    EYE ==>|"18-pin 0.5 mm FPC<br/>EYESPI cable 5462"| TFT
+    TFT["1.9in 320×170 IPS · ST7789<br/>visible area 46 × 25 mm<br/>onboard 3.3 V LDO + 3/5 V level shifter<br/>microSD slot<br/><i>EYESPI FPC connector unused</i>"]
+    HDR ==>|"same board"| TFT
   end
 
-  P_SCK  --> E_SCK
+  P_SCK  -->|"8–12 MHz to start"| E_SCK
   P_MOSI --> E_MOSI
-  P_MISO -.->|"optional · microSD only"| E_MISO
   P_D7   --> E_DC
   P_D4   --> E_RST
   P_D10  --> E_TCS
-  P_D9   -.->|"optional · microSD only"| E_SDCS
-  P_A2   -->|"PWM dimming"| E_LITE
   V3     -->|"3.3 V"| E_VIN
   E_GND  --> GND
+
+  %% ============ TRIGGER ============
+  subgraph BTN["🔘 Trigger"]
+    SW["Momentary pushbutton<br/>normally open"]
+  end
+
+  P_D2 -->|"INPUT_PULLUP<br/>reads LOW when pressed"| SW
+  SW --> GND
 
   classDef pwr fill:#4a2c00,stroke:#ffa726,stroke-width:2px,color:#ffe0b2
   classDef mcu fill:#00332b,stroke:#26a69a,stroke-width:2px,color:#b2dfdb
   classDef aud fill:#3a0d2e,stroke:#ec407a,stroke-width:2px,color:#f8bbd0
   classDef npx fill:#0d2137,stroke:#42a5f5,stroke-width:2px,color:#bbdefb
   classDef dsp fill:#1a2e05,stroke:#9ccc65,stroke-width:2px,color:#dcedc8
+  classDef btn fill:#33291a,stroke:#ffb74d,stroke-width:2px,color:#ffe0b2
   class USB,RAW,V3,GND pwr
-  class P_D8,P_D5,P_SCK,P_MOSI,P_MISO,P_D7,P_D4,P_D10,P_D9,P_A2 mcu
+  class P_D8,P_D5,P_SCK,P_MOSI,P_D7,P_D4,P_D10,P_D2 mcu
   class R1,R2,C1,C2,N1,N2,CB1,S_SIG,S_VCC,S_GND,S_POT,S_OUT aud
-  class R3,CB2,NP1,NP2,NP3,NP4,NP5 npx
-  class E_VIN,E_GND,E_SCK,E_MOSI,E_MISO,E_DC,E_RST,E_TCS,E_SDCS,E_LITE,TFT dsp
+  class R3,CB2,NP1,NP2 npx
+  class E_VIN,E_3V,E_GND,E_SCK,E_MOSI,E_MISO,E_DC,E_RST,E_TCS,E_SDCS,E_LITE,TFT dsp
+  class SW btn
 ```
 
 ### Connection table
@@ -229,34 +259,96 @@ signals are on the large alligator/sew pads, labelled `SIG` / `+` / `−`.
 | ----------------- | ------------------------------------------------------- |
 | KB2040 `D5` (GP5) | R3 (470 Ω) leg 1                                        |
 | R3 leg 2          | pixel 1 `DIN`                                           |
-| KB2040 `3V`       | pixel 1..5 `+` (all in parallel), and C_bulk 100 µF `+` |
-| KB2040 `GND`      | pixel 1..5 `−` (all in parallel), and C_bulk 100 µF `−` |
-| pixel N `DOUT`    | pixel N+1 `DIN`                                         |
-| pixel 5 `DOUT`    | leave unconnected                                       |
+| KB2040 `3V`       | pixel 1 + 2 `+` (in parallel), and C_bulk 100 µF `+`    |
+| KB2040 `GND`      | pixel 1 + 2 `−` (in parallel), and C_bulk 100 µF `−`    |
+| pixel 1 `DOUT`    | pixel 2 `DIN`                                           |
+| pixel 2 `DOUT`    | leave unconnected                                       |
 
 Each pixel has 3 pads per side; the two sides mirror each other except that data
 is `DIN` on one side and `DOUT` on the other. Power and ground are common across
 both sides, so you can daisy-chain in either direction.
 
-**Display** — via EYESPI breakout, wire by silkscreen label:
+**Display** — 5394 header straight into the breadboard, wire by silkscreen label:
 
-| EYESPI breakout | KB2040                                |
-| --------------- | ------------------------------------- |
-| `Vin`           | `3V`                                  |
-| `Gnd`           | `GND`                                 |
-| `SCK`           | `SCK` (GP18)                          |
-| `MOSI`          | `MOSI` (GP19)                         |
-| `DC`            | `D7` (GP7)                            |
-| `RST`           | `D4` (GP4)                            |
-| `TCS`           | `D10` (GP10)                          |
-| `Lite`          | `A2` (GP28)                           |
-| `MISO`          | `MISO` (GP20) — only if using microSD |
-| `SDCS`          | `D9` (GP9) — only if using microSD    |
+| 5394 pad | KB2040                                                  |
+| -------- | ------------------------------------------------------- |
+| `Vin`    | `3V`                                                    |
+| `3V`     | **leave unconnected** — this is an output, not an input  |
+| `Gnd`    | `GND`                                                   |
+| `SCK`    | `SCK` (GP18)                                            |
+| `MISO`   | **leave unconnected** — no microSD in this build         |
+| `MOSI`   | `MOSI` (GP19)                                           |
+| `TCS`    | `D10` (GP10)                                            |
+| `RST`    | `D4` (GP4)                                              |
+| `DC`     | `D7` (GP7)                                              |
+| `SDCS`   | **leave unconnected** — no microSD in this build         |
+| `Lite`   | **leave unconnected** — pulled high, backlight full on  |
 
-Leave `SDA`, `SCL`, `GP1`, `GP2`, `TSCS`, `MEMCS`, `BUSY`, `INT` unconnected —
-this display has no touch panel, no onboard RAM, and is not eInk.
+Seven wires total. The EYESPI FPC connector carries these same signals and stays
+empty.
 
-`Lite` can go straight to `3V` if you don't want software brightness control.
+**Trigger button**
+
+| From              | To                        |
+| ----------------- | ------------------------- |
+| KB2040 `D2` (GP2) | button leg 1              |
+| button leg 2      | `GND`                     |
+
+Configured `INPUT_PULLUP`, so the pin idles high and reads LOW when pressed. No
+pull-up resistor and no debounce cap — debouncing is done in software. `D2` is
+physically adjacent to the two `GND` pads, so this is a two-pin hop on the
+breadboard.
+
+---
+
+## Audio filter response
+
+The two RC sections are unbuffered, so they load each other — the denominator is
+`1 + 3sRC + (sRC)²`, not `(1 + sRC)²` — and the speaker's 10 kΩ trim pot hangs off
+the output as a third load. The real response is well below the 15.9 kHz a single
+isolated section would give:
+
+| Network | 3 k | 5 k | 8 k | 11 k | 130 k | −3 dB |
+| ------- | --- | --- | --- | ---- | ----- | ----- |
+| **2× (1 kΩ, 10 nF)** — as wired | −2.3 | −3.3 | −5.2 | −7.1 | **−36.9** | **7.0 kHz** |
+| 2× (1 kΩ, 6.8 nF) | −1.9 | −2.5 | −3.6 | −4.9 | −30.7 | 10.3 kHz |
+| 2× (1 kΩ, 4.7 nF) | −1.8 | −2.0 | −2.7 | −3.5 | −25.1 | 14.9 kHz |
+
+(dB, including the pot's loading. −3 dB is of the whole network, not one section.)
+
+As wired it's a dull-but-clean starting point: −37 dB of carrier rejection, at the
+cost of a soft top end. The little enclosed 8 Ω speaker rolls off up there anyway.
+If it sounds muffled, swapping both caps to 4.7 nF is a two-part change.
+
+**Never set the PWM carrier to 260 kHz.** The PAM8302A switches at ~250 kHz, so a
+260 kHz carrier beats against it at **10 kHz** — dead centre of the audio band.
+That rules out 9-bit resolution at 133 MHz. 130 kHz (10-bit) and 520 kHz (8-bit)
+both stay clear; this build uses 130 kHz.
+
+Our 2 kΩ of series resistance against the pot's 10 kΩ also divides the 3.3 V swing
+down to 2.75 V at `SIG`, which lands inside Adafruit's stated 0–3 V input range
+without any extra divider.
+
+---
+
+## Software shape
+
+Decided up front because it constrains the wiring and the bring-up order:
+
+- **`PWMAudio` lives entirely on core1** (`setup1()` / `loop1()`); core0 owns the
+  display, the pixels, and the logic. A full-screen 320×170 blit is ~109 KB, about
+  36 ms of blocking SPI — longer than PWMAudio's default ~23 ms of buffering, so
+  synthesis cannot live in `loop()`. Putting it on core1 also installs the DMA IRQ
+  on core1's NVIC, out of reach of the `noInterrupts()` inside `NeoPixel::show()`.
+- **Sounds are synthesized, not sampled.** No microSD, no assets.
+- **The display draws a coarse block grid** — the front logic display look, which is
+  what the astromech community builds out of LED matrices. Only changed cells get
+  redrawn, so it's cheap.
+- **The button is the trigger.** Idle chirping on a randomized timer is a small
+  addition on top if it feels too silent.
+- **Start SPI at 8–12 MHz** and raise it once the display is stable. 24 MHz over
+  breadboard jumpers is optimistic. `pins_arduino.h` already maps `SPI` to
+  GP18/19/20, so the default `SPI` object needs no `setSCK()` calls.
 
 ---
 
@@ -265,9 +357,19 @@ this display has no touch panel, no onboard RAM, and is not eInk.
 **Tie every ground together.** MCU, speaker, pixels, display. The most common
 cause of a PWM audio path that hums or does nothing is a floating amp ground.
 
-**Start the speaker trim pot at minimum.** The PAM8302A has gain and the RC
-network doesn't attenuate much in-band. A 3.3 V p-p signal into a 1 W speaker with
-the pot up will clip hard.
+**Start the speaker trim pot at minimum.** Gain is a fixed 24 dB and the pot is
+the only hardware volume control. A 3.3 V p-p signal into a 1 W speaker with the
+pot up will clip hard.
+
+**Set loudness with the pot, not in software.** The pot is a 10 kΩ divider ahead
+of a fixed-gain amp, so the amp's noise floor is the same wherever you set it — but
+the PWM DAC only has 10 bits, and every 6 dB of software attenuation throws away a
+bit. Drive the PWM near full scale and turn the screw. Software gain is for
+expression *within* a sound, not master volume.
+
+**The amp has no mute.** `/SD` is hardwired to `VDD` on the STEMMA board, so the
+PAM8302A is powered up whenever `RAW` is. There is no way to silence it from code
+short of cutting a trace.
 
 **The 470 µF at the amp is not optional.** Class-D current spikes on transients sag
 `RAW` enough to brown out the MCU. It shows up as random resets that only appear
@@ -278,18 +380,39 @@ At 5 V that's 3.5 V and the RP2040 only puts out 3.3 V — marginal. At 3.3 V th
 threshold drops to 2.31 V and there's plenty of margin. Slightly dimmer output,
 which is fine behind a diffuser.
 
-**3.3 V rail budget:** the regulator supplies 500 mA _including the MCU_. Five
-pixels at full white plus the display's backlight is roughly 260 mA of that. Fine
-as specified — just don't add a second string to this rail.
+**Expect the whites to skew warm.** 3.3 V is under SK6812's 3.5 V minimum, and the
+blue and green dies have the highest forward voltage, so they starve first. Dim is
+fine; pink-white may not be. If the color bothers you, one silicon diode from `RAW`
+gives ~4.0–4.3 V, where V_IH is 2.8–3.0 V and a 3.3 V GPIO still drives it.
+
+**3.3 V rail budget:** the regulator supplies 500 mA _including the MCU_. Two
+pixels at full white plus the display's backlight is roughly 150 mA of that, ~180 mA
+with the MCU. Comfortable — there's headroom here if the pixel count grows later.
+
+**`RAW`'s 500 mA polyfuse is the real ceiling, and the 3.3 V regulator draws
+through it too.** Average load is ~280 mA with transient peaks near 530 mA, so it
+holds — but the fuse's series resistance is part of why the 470 µF matters. A
+periscope servo later would blow straight past it (stall is 0.5–1 A); there's a
+`USB+ → RAW` solder jumper on the back of the KB2040 for up to 2 A when that day
+comes.
 
 **Support the display panel mechanically.** Adafruit's own warning: 5394 was
 designed for smartwatches where cover glass retains it, and "without something
 gently holding the screen down, the backlight can eventually peel away from the
 TFT." The dome faceplate needs to press lightly on the display face.
 
-**Check for solder pads before ordering the EYESPI parts.** Every Adafruit source
-for 5394 documents only the 18-pin FPC connector, but look at the physical board —
-if it has a 0.1" header row you can skip 5613 and 5462 entirely and wire direct.
+**`3V` on the display is an output, not an input.** It's the onboard regulator's
+3.3 V rail brought out for convenience. Feeding the KB2040's `3V` into it instead
+of `Vin` ties two regulator outputs together. Power goes to `Vin`.
+
+**`MISO` sits before `MOSI` on this header** — pads 5 and 6, the reverse of the
+order most Adafruit breakouts use. Easy to swap on autopilot; the display still
+works when you do, because the TFT is write-only and never uses `MISO`. You'd only
+find out when the microSD refuses to mount.
+
+**`Lite` needs no wire.** It's pulled high on the display board, so the backlight
+runs full on with the pad floating. There is no brightness control in this build
+and no GPIO spent on one.
 
 See [`docs/wiring.md`](docs/wiring.md) for the parts research and
 [`docs/hardware-notes.md`](docs/hardware-notes.md) for the toolchain and audio

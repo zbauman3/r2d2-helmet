@@ -71,6 +71,10 @@ That blocks for roughly `numBytes × 10 µs`. Thirty RGB pixels ≈ **900 µs wi
 interrupts off**. This is a known open bug (Adafruit_NeoPixel issue #441, opened
 July 2025, no maintainer response).
 
+**At this build's scale it is nearly a non-issue:** 2 RGB pixels = 6 bytes ≈
+**60 µs**. Worth knowing anyway, because the number scales linearly if the dome
+ever gets a real pixel ring.
+
 **Consequence:** the doc's mitigation #2 ("drive the NeoPixels from PIO") does not
 help — they already are. What actually fixes it:
 
@@ -97,11 +101,27 @@ Both of the doc's "not required" claims are confirmed by Adafruit directly:
 1 W speaker. Budget some attenuation into the RC network rather than relying on the
 pot alone.
 
-The **RC filter requirement stands.** `1 kΩ + 10 nF` → corner at 15.9 kHz (the doc's
-"~16 kHz" is right). It matters more than the doc implies: the PAM8302A's own
-class-D output switches at ~250 kHz, so an unfiltered carrier at the input produces
-intermodulation products that land *in* the audio band. Cascading two sections is
-worth it.
+The **RC filter requirement stands**, and matters more than the doc implies: the
+PAM8302A's own class-D output switches at ~250 kHz, so an unfiltered carrier at the
+input produces intermodulation products that land *in* the audio band.
+
+But `1 kΩ + 10 nF` → "15.9 kHz" is the corner of **one isolated section**, not of
+the cascade. Unbuffered sections load each other, and the amp's 10 kΩ trim pot is a
+third load — the real network is **−3 dB at 7.0 kHz**. Full table in `wiring.md`.
+The build keeps the 10 nF anyway: −37 dB of carrier rejection is worth a soft top
+end on a speaker that rolls off up there regardless.
+
+**Corollary the doc could not have known:** never pick a 260 kHz carrier (9-bit at
+133 MHz). It beats against the amp's 250 kHz switching at 10 kHz, in the middle of
+the audio band. 130 kHz and 520 kHz are both clear.
+
+**And from the STEMMA Speaker schematic**, which the pinouts page does not
+document: the trim pot is a 10 kΩ divider across `SIG`→`GND` with the 1 µF coupling
+cap *after* it; gain is a fixed 24 dB (the `A` variant — the 100 Ω `R12`/`R13` are
+EMI resistors, not gain-setting); and `/SD` is tied to `VDD`, so **there is no
+software mute**. Because the amp's noise floor sits downstream of the pot, master
+volume belongs on the screwdriver, not in code — every 6 dB of software attenuation
+costs a bit of a 10-bit DAC.
 
 ### 4. Mbed EOL — the date is July 2026, and it has passed
 
@@ -155,18 +175,47 @@ Contention to watch:
 - **PWM slices (8, two outputs each):** `PWMAudio` owns a whole slice. No
   `analogWrite()` to the sibling pin.
 - **DMA:** `PWMAudio` claims channels *and* a DMA timer.
-- **RAW pin** is the 5 V feed for NeoPixels; fused at 500 mA–1 A by default.
+- **`RAW`** (5 V, **500 mA polyfuse** + polarity diode) feeds the STEMMA Speaker
+  amp — *and the 3.3 V regulator*, so everything runs through that fuse. ~280 mA
+  average, ~530 mA on transients. A periscope servo (0.5–1 A stall) would exceed
+  it; the board has a `USB+ → RAW` jumper to bypass for up to 2 A.
+- **`3V`** (500 mA *including the MCU*) feeds the NeoPixels and the TFT's `Vin` —
+  the pixels live here deliberately, to drop their logic threshold. See
+  `wiring.md`.
+
+## Settled since this doc was written
+
+- **Logic display panel: Adafruit 5394**, 1.9" 320×170 IPS, ST7789 — wired over
+  SPI0 via its 1×11 0.1" header, backlight left at full. Pin map and pad order in
+  `wiring.md`.
+- **NeoPixel chain: 2 pixels on the 3.3 V rail**, GP5, 470 Ω series. Under
+  SK6812's 3.5 V minimum, so expect whites to skew warm as the blue and green dies
+  starve; one silicon diode from `RAW` (~4.0–4.3 V) is the fix if the color matters.
+- **Audio: `PWMAudio` on GP8** at 22.05 kS/s, 130 kHz carrier, two-pole RC into the
+  STEMMA Speaker. Synthesized only — no samples, no microSD.
+- **Power: USB power bank** into USB-C. Idle draw ~180 mA, clear of the ~50–100 mA
+  auto-shutoff threshold most banks use.
+- **Trigger: a momentary button on GP2**, `INPUT_PULLUP` to GND, debounced in
+  software. No hall sensor, no accelerometer.
+- **Core split: `PWMAudio` runs entirely on core1** (`setup1()`/`loop1()`); core0
+  owns display, pixels, and logic. A full-screen blit is ~36 ms of blocking SPI
+  against ~23 ms of default audio buffering, so synthesis cannot share a core with
+  the display. This also puts the DMA IRQ on core1's NVIC, out of reach of the
+  `noInterrupts()` in item 2 — which retires that bug entirely.
 
 ## Still open
 
-- **Logic display panel.** Not resolved. Both `ST7789` (1.54" 240×240 square) and
-  `GC9107` (0.85" 128×128) are supported by `Arduino_GFX`; the 8×8 I2C LED backpack
-  is Adafruit_GFX-compatible and much closer to the screen-used look. Note that the
-  astromech builder community (Teeces, RSeries LogicEngine) uses **LED matrices**,
-  not TFTs, for exactly this part — worth looking at before buying a screen.
-  There are scattered reports of ST7789 trouble specifically under arduino-pico
-  (arduino-pico discussion #1217) — verify before committing.
-- Restraining bolt hall-sensor gag.
+- **ST7789 under arduino-pico.** Scattered reports of trouble
+  (arduino-pico discussion #1217). Not verified either way — this is the first
+  thing to shake out at display bring-up, before any UI work.
+- **Grid geometry for the logic display.** Settled that the 5394 imitates an LED
+  matrix by drawing a coarse block grid — the look the astromech community (Teeces,
+  RSeries LogicEngine) builds in hardware. Cell size, count, and palette are still
+  open, and are best judged on the real panel rather than on paper.
+- **Idle behaviour.** The button is the only trigger right now, which may read as
+  lifeless between presses. Autonomous chirping on a randomized timer is a small
+  addition on top if it does.
+- Restraining bolt hall-sensor gag (GP3 free; GP2 now has the button).
 - Cosmetic prod.
 
 ## Sources
@@ -180,8 +229,21 @@ Contention to watch:
 - [Adafruit_NeoPixel issue #441](https://github.com/adafruit/Adafruit_NeoPixel/issues/441) ·
   [Adafruit_Neopixel_RP2.cpp](https://github.com/adafruit/Adafruit_NeoPixel/blob/master/Adafruit_Neopixel_RP2.cpp)
 - [Adafruit_NeoPXL8](https://github.com/adafruit/Adafruit_NeoPXL8)
+- [STEMMA Speaker PCB / schematic](https://github.com/adafruit/Adafruit-STEMMA-Speaker-PCB)
+  — the authority on the trim pot, gain, and `/SD`; the pinouts page documents none
+  of it
 - [The end of Mbed marks a new beginning for Arduino](https://blog.arduino.cc/2024/07/24/the-end-of-mbed-marks-a-new-beginning-for-arduino/) ·
   [Mbed OS is end of life July 2026](https://blog.adafruit.com/2026/02/02/a-reminder-that-mbed-os-is-end-of-life-july-2026/)
-- [Adafruit KB2040 pinouts](https://learn.adafruit.com/adafruit-kb2040/pinouts)
+- KB2040 pin map — taken from
+  [`variants/adafruit_kb2040/pins_arduino.h`](https://github.com/earlephilhower/arduino-pico/blob/master/variants/adafruit_kb2040/pins_arduino.h)
+  and
+  [CircuitPython `pins.c`](https://github.com/adafruit/circuitpython/blob/main/ports/raspberrypi/boards/adafruit_kb2040/pins.c),
+  which agree. Prefer these over the
+  [guide's pinouts page](https://learn.adafruit.com/adafruit-kb2040/pinouts) —
+  its prose is easy to misread and produced a wrong map on the first pass.
+- Display 5394 — [product page](https://www.adafruit.com/product/5394) ·
+  [guide pinouts](https://learn.adafruit.com/adafruit-1-9-color-ips-tft-display/pinouts) ·
+  [PCB repo](https://github.com/adafruit/Adafruit-1.9in-320x170-Color-IPS-TFT-PCB)
+  (`JP1` net list is the authority on pad order)
 - [How the ARP 2600 created R2-D2](https://www.redbull.com/ca-en/playing-with-arp-2600-star-wars-r2d2) ·
   [Ben Burtt Special: Star Wars – The Sounds](https://designingsound.org/2009/09/10/ben-burtt-special-star-wars-the-sounds-part-2/)
