@@ -4,3 +4,15 @@
 .vscode/launch.json
 .vscode/ipch
 .DS_Store
+
+# Recorded audio asset — deliberately untracked.
+#
+# If present, src/scream_pcm.{h,cpp} must provide:
+#   constexpr uint32_t SCREAM_PCM_RATE    equal to config::AUDIO_SAMPLE_RATE
+#   extern const uint32_t SCREAM_PCM_LEN  sample count
+#   extern const int16_t  SCREAM_PCM[]    mono signed 16-bit PCM at that rate
+#
+# Absent, the build falls back to the synthesised Scream recipe in phrase.cpp,
+# so a fresh clone compiles and works without them.
+src/scream_pcm.h
+src/scream_pcm.cpp

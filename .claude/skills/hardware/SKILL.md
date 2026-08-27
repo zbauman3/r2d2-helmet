@@ -35,8 +35,9 @@ Verified against `variants/adafruit_kb2040/pins_arduino.h` (arduino-pico) and `p
 | SCK        | GP18 | 1A        | TFT clock (SPI0)                      |
 | MOSI       | GP19 | 1B        | TFT data (SPI0)                       |
 | D6         | GP6  | 3A        | Periscope servo (PIO-driven, not PWM) |
+| A2         | GP28 | 6A        | TFT backlight, PWM                    |
 
-Free: GP0/GP1 (Serial1), GP9, GP20, GP12/GP13 (STEMMA QT), GP26–GP29. GP11 is the onboard BOOT button and GP17 the onboard NeoPixel; neither is castellated.
+Free: GP0/GP1 (Serial1), GP9, GP20, GP12/GP13 (STEMMA QT), GP26/GP27, GP29. GP11 is the onboard BOOT button and GP17 the onboard NeoPixel; neither is castellated.
 
 Both buttons sit on GP2/GP3, which is `Wire1` — so **`Wire1` is no longer available**. I2C, if it is ever needed, goes on the STEMMA QT port (`Wire0`, GP12/GP13), which is still free and needs no soldering.
 
@@ -59,29 +60,36 @@ Slice 1 is fully occupied: GP2/GP18 share channel A and GP3/GP19 share channel B
 
 | Rail                                              | Feeds                                    | Draw                                                |
 | ------------------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
-| `RAW` — 5 V, **500 mA polyfuse** + polarity diode | speaker amp, **and the 3.3 V regulator** | ~350 mA peaks at 1 W into 8 Ω                       |
+| `RAW` — 5 V, **polyfuse bypassed** (see below) | speaker amp, periscope servo, **and the 3.3 V regulator** | ~350 mA amp transient + ~150 mA servo moving        |
 | `3V` — 500 mA _including the MCU_                 | NeoPixels, TFT `Vin`                     | 72 mA pixels + ~80 mA display + ~30 mA MCU ≈ 180 mA |
 
-**Everything runs through the 500 mA polyfuse**, including the 3.3 V rail: ~280 mA average, ~530 mA transient. It holds, with two consequences.
+**Everything runs through `RAW`**, the 3.3 V rail included. As shipped that path goes via a 500 mA polyfuse; **on this build the `USB+ → RAW` jumper is closed and the fuse is out of circuit** — see below for why.
 
-The fuse's series resistance worsens transient sag, which is why **bulk capacitance at the amp is mandatory** — class-D current spikes otherwise brown out the MCU. It shows up as random resets that only appear once audio and lights run together.
+Bulk capacitance at the amp is **mandatory** regardless — class-D current spikes otherwise brown out the MCU. It shows up as random resets that only appear once audio and lights run together. Bypassing the fuse helped by removing its series resistance from the path, but it did not remove the need for local charge storage.
 
 Built with **1000 µF**. The value is not tuned; anything from 220 µF up does the job, and more is better as long as it fits. Several smaller caps in parallel are marginally better than one large one, since ESR parallels along with capacitance.
 
-### The servo forces the fuse bypass
+### The fuse bypass — done, and why
 
-With the SG92R fitted the budget no longer closes:
+**Status: the `USB+ → RAW` solder jumper on the back of the KB2040 is closed.** The 500 mA polyfuse is bypassed and `RAW` is limited only by USB and the power bank, up to ~2 A.
+
+The servo forced it. With the SG92R fitted the stock budget did not close:
 
 | Load | Draw |
 | --- | --- |
 | 3.3 V rail via the LDO | ~180 mA |
 | Speaker amp | ~350 mA transient |
 | SG92R | ~150 mA moving, **650 mA stalled** |
-| Worst case | **~1180 mA** against a 500 mA fuse |
+| Worst case | **~1180 mA** against the stock 500 mA fuse |
 
-**Close the `USB+ → RAW` solder jumper** on the back of the KB2040. It bypasses the polyfuse for up to 2 A from USB, leaving the power bank's own protection as the limit. Not optional once the servo is wired — without it the fuse trips on any coincidence of servo movement and an audio transient, and a tripped polyfuse looks exactly like a dead board until it cools.
+Two things follow from the bypass:
 
-Fit **470 µF across the servo's supply at the servo**, not back at the breakout. Inrush is what browns out everything else, and local capacitance supplies it instead of pulling it down a shared wire. Run the servo's ground back to the common point short and thick for the same reason.
+- **`RAW` sits closer to a true 5 V under load**, since the fuse's series resistance is gone. The SG92R is 4.8 V nominal and was previously running slightly under, so this helps it and the amp both.
+- **There is no board-level overcurrent protection any more.** The power bank is the only limit. A short on `RAW` will not be caught by anything on the board.
+
+If the jumper is ever reopened, the servo must come out with it — a tripped polyfuse looks exactly like a dead board until it cools, which is a miserable failure to diagnose.
+
+Fit **bulk capacitance across the servo's supply at the servo** (1000 µF as built), not back at the breakout. Inrush is what browns out everything else, and local capacitance supplies it instead of pulling it down a shared wire. Run the servo's ground back to the common point short and thick for the same reason.
 
 The alternative, if the jumper is unappealing: feed the servo directly from the power bank through a USB breakout and share only ground with the KB2040. Electrically cleaner — the servo's spikes never touch the MCU's rail — at the cost of one more part and a second cable.
 
@@ -107,7 +115,7 @@ Three traps, all in the pad order (which is in `README.md`):
 
 - **`MISO` sits before `MOSI`** (pads 5 and 6), the reverse of most Adafruit breakouts. Swapping them still gives a working display, because the TFT is write-only — you'd only find out when microSD failed to mount.
 - **Pad 2 `3V` is a regulator output, not an input.** Power goes to `Vin` (pad 1). Driving pad 2 ties two regulator outputs together.
-- **`Lite` is pulled high on-board**, so the backlight runs full on with the pad floating. This build leaves it unconnected; GP28 is free as a result.
+- **`Lite` is pulled high on-board**, so an unconnected pad means a permanently lit backlight. It is driven from `A2`/GP28 so standby can actually go dark. Driving it works against that pull-up rather than a floating node — a few hundred microamps, nothing a GPIO notices, and slice 6 has nothing else on it. Leave it unwired and the panel simply stays lit, so this is an enhancement rather than a dependency.
 
 Mechanical, and it matters for a costume: this panel was designed for smartwatches where cover glass retains it. Adafruit warns that "without something gently holding the screen down, the backlight can eventually peel away from the TFT." The dome faceplate must press lightly on the display face.
 

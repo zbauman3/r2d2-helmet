@@ -16,9 +16,9 @@ A project for an R2D2 costume helmet.
 | 1.9" 320×170 IPS TFT   | 5394 | ST7789, logic display panel           |
 | TowerPro SG92R servo   | 169  | 9 g micro servo, periscope hinge      |
 
-Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, and **two** bulk electrolytics — one at the amp (**1000 µF as built**) and one at the servo (470 µF or more).
+Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, and **two** bulk electrolytics — one at the amp and one at the servo, **1000 µF each as built**. Neither value is tuned; anything from 220 µF up works and more is better as long as it fits.
 
-**The servo requires bypassing `RAW`'s 500 mA polyfuse** — see [Power](#power) below. Do this before wiring it. Plus **two** momentary pushbuttons (normally open) — no resistors needed, the RP2040's internal pull-ups handle both.
+**The `USB+ → RAW` jumper on the back of the KB2040 is closed on this build**, bypassing the 500 mA polyfuse — the servo needs it. See [Power](#power). Plus **two** momentary pushbuttons (normally open) — no resistors needed, the RP2040's internal pull-ups handle both.
 
 Powered from a **USB power bank** into the KB2040's USB-C.
 
@@ -40,7 +40,7 @@ Order verified against the net list in Adafruit's Eagle board file (`JP1`) and c
 | 8 | `RST`  | TFT reset (auto-reset circuit onboard)          |
 | 9 | `DC`   | TFT data/command select                         |
 | 10 | `SDCS` | microSD chip select — **not used**             |
-| 11 | `Lite` | backlight enable — **pulled high, leave unconnected** |
+| 11 | `Lite` | backlight enable — driven from `A2` to kill the panel in standby |
 
 ---
 
@@ -53,12 +53,12 @@ The KB2040 is Pro Micro shaped: 12 castellated pads per edge, USB-C at the top.
 ```
               USB-C
         ┌───────────────┐
-  D0/TX │1           24│ RAW      <- 5V from USB, 500mA polyfuse
+  D0/TX │1           24│ RAW      <- 5V from USB, fuse BYPASSED
   D1/RX │2           23│ GND
     GND │3           22│ RST
     GND │4           21│ 3V       <- 3.3V reg out, 500 mA
      D2 │5           20│ A3
-     D3 │6           19│ A2
+     D3 │6           19│ A2       <- TFT backlight
      D4 │7           18│ A1
      D5 │8           17│ A0
      D6 │9           16│ SCK
@@ -80,7 +80,7 @@ flowchart TB
   subgraph PWR["⚡ Power rails"]
     direction TB
     USB["USB-C<br/>5 V in"]
-    RAW["RAW pin<br/><b>5 V</b> · fused 500 mA–1 A"]
+    RAW["RAW pin<br/><b>5 V</b> · <b>polyfuse bypassed</b><br/><i>USB+ → RAW jumper closed</i><br/>limited by the power bank, ~2 A"]
     V3["3V pin<br/><b>3.3 V</b> · 500 mA total<br/><i>incl. the MCU itself</i>"]
     GND(["GND<br/><b>common — tie all together</b>"])
     USB --> RAW
@@ -99,6 +99,7 @@ flowchart TB
     P_D10["<b>D10</b> · GP10"]
     P_D2["<b>D2</b> · GP2"]
     P_D6["<b>D6</b> · GP6"]
+    P_A2["<b>A2</b> · GP28<br/>PWM slice 6A"]
     P_D3["<b>D3</b> · GP3"]
   end
 
@@ -168,7 +169,7 @@ flowchart TB
       E_RST["8 · <b>RST</b>"]
       E_DC["9 · <b>DC</b>"]
       E_SDCS["10 · <b>SDCS</b><br/><i>no microSD — unwired</i>"]
-      E_LITE["11 · <b>Lite</b><br/><i>pulled high — leave floating</i>"]
+      E_LITE["11 · <b>Lite</b><br/><i>pulled high on the panel</i>"]
     end
     TFT["1.9in 320×170 IPS · ST7789<br/>visible area 46 × 25 mm<br/>onboard 3.3 V LDO + 3/5 V level shifter<br/>microSD slot<br/><i>EYESPI FPC connector unused</i>"]
     HDR ==>|"same board"| TFT
@@ -179,6 +180,7 @@ flowchart TB
   P_D7   --> E_DC
   P_D4   --> E_RST
   P_D10  --> E_TCS
+  P_A2   -->|"20 kHz PWM<br/>LOW = backlight off"| E_LITE
   V3     -->|"3.3 V"| E_VIN
   E_GND  --> GND
 
@@ -194,11 +196,11 @@ flowchart TB
     S_SIG2["<b>signal</b> · orange<br/>50 Hz, 500–2500 µs"]
     S_PWR["<b>V+</b> · red<br/>4.8–6 V · 650 mA stall"]
     S_GND2["<b>GND</b> · brown"]
-    CB3["C_bulk<br/>470 µF"]
+    CB3["C_bulk<br/>1000 µF"]
   end
 
   P_D6 -->|"PIO-generated pulse train"| S_SIG2
-  RAW -->|"<b>fuse must be bypassed</b>"| S_PWR
+  RAW -->|"650 mA stall"| S_PWR
   RAW --> CB3
   CB3 --> GND
   S_GND2 --> GND
@@ -216,7 +218,7 @@ flowchart TB
   classDef btn fill:#33291a,stroke:#ffb74d,stroke-width:2px,color:#ffe0b2
   classDef srv fill:#2b1a33,stroke:#ba68c8,stroke-width:2px,color:#e1bee7
   class USB,RAW,V3,GND pwr
-  class P_D8,P_D5,P_SCK,P_MOSI,P_D7,P_D4,P_D10,P_D2,P_D3,P_D6 mcu
+  class P_D8,P_D5,P_SCK,P_MOSI,P_D7,P_D4,P_D10,P_D2,P_D3,P_D6,P_A2 mcu
   class R1,R2,C1,C2,N1,N2,CB1,S_SIG,S_VCC,S_GND,S_POT,S_OUT aud
   class R3,CB2,NP1,NP2 npx
   class E_VIN,E_3V,E_GND,E_SCK,E_MOSI,E_MISO,E_DC,E_RST,E_TCS,E_SDCS,E_LITE,TFT dsp
@@ -272,22 +274,24 @@ Each pixel has 3 pads per side; the two sides mirror each other except that data
 | `RST`    | `D4` (GP4)                                              |
 | `DC`     | `D7` (GP7)                                              |
 | `SDCS`   | **leave unconnected** — no microSD in this build         |
-| `Lite`   | **leave unconnected** — pulled high, backlight full on  |
+| `Lite`   | `A2` (GP28) — backlight, fades out in standby            |
 
-Seven wires total. The EYESPI FPC connector carries these same signals and stays empty.
+Eight wires total. The EYESPI FPC connector carries these same signals and stays empty.
+
+`Lite` is pulled high on the panel, so driving it works against that pull-up rather than a floating node — harmless, a few hundred microamps. Leaving `A2` unconnected still gives a permanently-on backlight, so the display keeps working if this wire is ever dropped.
 
 **Periscope servo**
 
 | From               | To                                          |
 | ------------------ | ------------------------------------------- |
 | KB2040 `D6` (GP6)  | servo signal (**orange**)                   |
-| KB2040 `RAW` (5 V) | servo `V+` (**red**), and C_bulk 470 µF `+` |
-| C_bulk 470 µF `−`  | GND                                         |
+| KB2040 `RAW` (5 V) | servo `V+` (**red**), and C_bulk 1000 µF `+` |
+| C_bulk 1000 µF `−` | GND                                         |
 | KB2040 `GND`       | servo `GND` (**brown**)                     |
 
 SG92R wire colours: **orange = signal, red = V+, brown = ground.** Note this is not the same convention as the STEMMA speaker — brown, not black, is ground here.
 
-**`RAW`'s polyfuse must be bypassed first** (see [Power](#power)), and run the servo's ground back to the same point as everything else with as short and thick a wire as you can. Its current spikes go home through that wire, and a long thin one turns them into a voltage wobble that every other subsystem sees.
+`RAW`'s polyfuse is bypassed on this build (see [Power](#power)). Run the servo's ground back to the same point as everything else with as short and thick a wire as you can. Its current spikes go home through that wire, and a long thin one turns them into a voltage wobble that every other subsystem sees.
 
 **Buttons**
 
@@ -308,7 +312,9 @@ Note this consumes `Wire1`. If I2C is ever needed, use the STEMMA QT port (`Wire
 
 ## Power
 
-Everything on `RAW` runs through a **500 mA polyfuse**, including the 3.3 V regulator. Adding the servo puts it well over:
+**As built, the `USB+ → RAW` solder jumper on the back of the KB2040 is closed.** That bypasses the board's 500 mA polyfuse and allows up to 2 A from USB, leaving the power bank's own protection as the only current limit.
+
+That was forced by the servo. With everything fitted, the stock fuse would not have held:
 
 | Load | Draw |
 | --- | --- |
@@ -317,9 +323,13 @@ Everything on `RAW` runs through a **500 mA polyfuse**, including the 3.3 V regu
 | SG92R servo | ~150 mA moving, **650 mA stalled** |
 | **Worst case** | **~1180 mA** |
 
-The fix is on the back of the KB2040: **close the `USB+ → RAW` solder jumper.** That bypasses the fuse and allows up to 2 A from USB. The power bank's own protection takes over from the board's.
+Two consequences worth holding onto:
 
-Then fit the 470 µF across the servo's supply, right at the servo. Its inrush is what browns out everything else, and the cap supplies that locally instead of pulling it down a wire.
+**`RAW` now sits closer to a true 5 V under load.** The polyfuse's series resistance was part of what made the rail sag on transients, so removing it helps the amp and the servo both — the SG92R is 4.8 V nominal and was previously running slightly under.
+
+**There is no longer any board-level overcurrent protection.** A short on `RAW` is between you and the power bank. Worth remembering before probing around a live circuit.
+
+Bulk capacitance still matters just as much — fit 1000 µF across the servo's supply right at the servo. Its inrush is what browns out everything else, and the cap supplies that locally rather than dragging it down a shared wire.
 
 A stall is the case that matters — 650 mA sustained, drawn until something moves or breaks. Keep `PERISCOPE_ANGLE_MIN` / `MAX` inside whatever the hinge mechanically allows so the horn never drives into a hard stop.
 
@@ -329,8 +339,8 @@ A stall is the case that matters — 650 mA sustained, drawn until something mov
 
 - **Tie every ground together** — MCU, speaker, pixels, display. A floating amp ground is the most common reason a PWM audio path hums or does nothing.
 - **Turn the speaker trim pot to minimum.** Gain is a fixed 24 dB; 3.3 V p-p with the pot up will clip hard into a 1 W speaker.
-- **Close the `USB+ → RAW` jumper** on the back of the KB2040 before wiring the servo. Without it the polyfuse trips under load.
-- **Fit both bulk caps** — 1000 µF at the amp, 470 µF at the servo. Class-D transients sag `RAW` enough to brown out the MCU, and it only shows up once audio and lights run together.
+- **Confirm the `USB+ → RAW` jumper is still bridged** on the back of the KB2040. Without it the polyfuse trips as soon as the servo moves during a chirp.
+- **Fit both bulk caps** — 1000 µF at the amp, 1000 µF at the servo. Class-D transients sag `RAW` enough to brown out the MCU, and it only shows up once audio and lights run together.
 - **Check pixel `V+` goes to `3V`, not `RAW`.** This is what lets 3.3 V logic drive them without a level shifter.
 - **Support the display panel mechanically.** Adafruit's warning: 5394 was designed for smartwatches where cover glass retains it, and "without something gently holding the screen down, the backlight can eventually peel away from the TFT." The dome faceplate needs to press lightly on the display face.
 

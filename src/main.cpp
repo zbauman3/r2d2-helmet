@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "arousal.h"
 #include "audio.h"
 #include "buttons.h"
 #include "config.h"
@@ -7,6 +8,7 @@
 #include "interaction.h"
 #include "lights.h"
 #include "mode.h"
+#include "mood.h"
 #include "periscope.h"
 #include "rng.h"
 
@@ -25,8 +27,8 @@
 // THE ONLY THING THAT CROSSES BETWEEN THEM is a 32-bit cue word through the
 // hardware FIFO. No shared structs, no locks. Everything else is core-private:
 //
-//   core0   mode, buttons, display, lights, periscope, interaction,
-//           rng::state[0], Serial
+//   core0   mode, mood, arousal, buttons, display, lights, periscope,
+//           interaction, rng::state[0], Serial
 //   core1   audio, phrase, voice, rng::state[1]
 //
 // Serial belongs to core0 alone. Printing from both cores interleaves mid-line
@@ -54,17 +56,42 @@ void fire_interaction(uint32_t now_ms) {
   // so the log shows what happened.
   interaction::trigger(now_ms);
 
-  Serial.print(F("trigger  agitation="));
-  Serial.println(interaction::agitation(now_ms));
+  Serial.print(F("trigger  arousal="));
+  Serial.println(arousal::level(now_ms));
 
   display::flourish(now_ms);
   lights::flourish(now_ms);
   periscope::flourish(now_ms);
 }
 
-// Bench-only mode control, kept even though button 1 now exists: once the
-// costume is assembled the buttons are buried in the shell, and a serial toggle
-// is the only way to drive mode from a laptop.
+// A deliberate yes or no. Everything that can express it does, together: the
+// voice, both PSIs, the screen's palette and the periscope. mood carries the
+// window so all four agree on when the moment starts and ends.
+void answer(bool yes, uint32_t now_ms) {
+  mood::set(yes ? mood::Mood::Positive : mood::Mood::Negative, now_ms);
+  interaction::answer(yes, now_ms);
+  periscope::answer(yes, now_ms);
+
+  Serial.println(yes ? F("answer: YES") : F("answer: NO"));
+}
+
+// The panic scream. Pins arousal at maximum for the duration, so the screen,
+// the PSIs and the periscope all go frantic alongside the sound rather than
+// carrying on at whatever pace they were at.
+void fire_scream(uint32_t now_ms) {
+  arousal::pin(now_ms, config::SCREAM_PIN_MS);
+  interaction::scream(now_ms);
+
+  display::flourish(now_ms);
+  lights::flourish(now_ms);
+  periscope::flourish(now_ms);
+
+  Serial.println(F("SCREAM"));
+}
+
+// Bench-only controls, kept even though the buttons work: once the costume is
+// assembled they are buried in the shell, and serial is the only way to drive
+// it from a laptop.
 void poll_serial_control() {
   if (!Serial.available()) {
     return;
@@ -75,6 +102,12 @@ void poll_serial_control() {
     log_mode(mode::toggle());
   } else if (c == 't' || c == 'T') {
     fire_interaction(millis());
+  } else if (c == 'y' || c == 'Y') {
+    answer(true, millis());
+  } else if (c == 'n' || c == 'N') {
+    answer(false, millis());
+  } else if (c == 's' || c == 'S') {
+    fire_scream(millis());
   }
 }
 
@@ -87,6 +120,8 @@ void setup() {
 
   rng::begin();
   mode::begin();
+  mood::begin();
+  arousal::begin();
   buttons::begin();
   interaction::begin();
   display::begin();
@@ -94,7 +129,9 @@ void setup() {
   periscope::begin();
 
   Serial.println(F("r2d2-helmet: up, standby."));
-  Serial.println(F("  D2 or 'm' = toggle mode, D3 or 't' = trigger"));
+  Serial.println(F("  D2 hold = mode ('m')   D2 x2 = no ('n')   D2 x3 = yes ('y')"));
+  Serial.println(F("  D2 x5   = scream ('s')"));
+  Serial.println(F("  D3 tap  = chirp ('t')  D2 x1 and x4 = nothing, on purpose"));
 }
 
 void loop() {
@@ -102,10 +139,22 @@ void loop() {
   // given frame agrees on what time it is.
   const uint32_t now_ms = millis();
 
+  // Drain core1's replies before anything reads audio::busy(), so a chirp that
+  // finished this pass is not still counted as playing.
+  audio::poll(now_ms);
+
   const buttons::Events pressed = buttons::update(now_ms);
 
-  if (pressed.mode_pressed) {
+  if (pressed.mode_toggle) {
     log_mode(mode::toggle());
+  }
+
+  if (pressed.scream) {
+    fire_scream(now_ms);
+  } else if (pressed.answer_yes) {
+    answer(true, now_ms);
+  } else if (pressed.answer_no) {
+    answer(false, now_ms);
   }
 
   if (pressed.trigger_pressed) {
@@ -115,6 +164,8 @@ void loop() {
   if (config::BENCH_SERIAL_CONTROL) {
     poll_serial_control();
   }
+
+  interaction::update(now_ms);
 
   display::update(now_ms);
   lights::update(now_ms);

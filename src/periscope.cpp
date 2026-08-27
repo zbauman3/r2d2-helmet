@@ -2,9 +2,10 @@
 
 #include <Servo.h>
 
+#include "arousal.h"
 #include "config.h"
-#include "interaction.h"
 #include "mode.h"
+#include "mood.h"
 #include "rng.h"
 #include "timing.h"
 
@@ -30,6 +31,26 @@ bool was_large_move = false;
 
 uint32_t dwell_until_ms = 0;
 uint16_t slew_dps = config::PERISCOPE_SLEW_CALM_DPS;
+
+// --- Scripted gestures -----------------------------------------------------
+//
+// A nod or a dip is a fixed sequence, not a wander, so it runs from a little
+// script that overrides target selection until it finishes. Everything is
+// written in terms of UP and DOWN rather than raw angles, so a mirrored hinge
+// is fixed by swapping two constants in config.h and nothing else.
+
+constexpr uint8_t MAX_STEPS = 8;
+
+struct GestureStep {
+  int16_t angle;
+  uint16_t hold_ms;
+  uint8_t dps;
+};
+
+GestureStep script[MAX_STEPS];
+uint8_t script_len = 0;
+uint8_t script_at = 0;
+bool in_gesture = false;
 
 timing::Interval step(config::PERISCOPE_STEP_MS);
 mode::Mode last_mode = mode::Mode::Standby;
@@ -83,10 +104,10 @@ void command(int16_t degrees) {
 // Chooses somewhere to look next. The shape of this function is the whole
 // difference between "alive" and "twitching".
 void choose_target(uint32_t now_ms) {
-  const uint16_t dwell = interaction::pace(config::PERISCOPE_DWELL_CALM_MS,
-                                           config::PERISCOPE_DWELL_HOT_MS, now_ms);
-  slew_dps = interaction::pace(config::PERISCOPE_SLEW_CALM_DPS,
-                               config::PERISCOPE_SLEW_HOT_DPS, now_ms);
+  const uint16_t dwell = arousal::pace(config::PERISCOPE_DWELL_CALM_MS,
+                                       config::PERISCOPE_DWELL_HOT_MS, now_ms);
+  slew_dps = arousal::pace(config::PERISCOPE_SLEW_CALM_DPS,
+                           config::PERISCOPE_SLEW_HOT_DPS, now_ms);
 
   // Stillness is a behaviour, not an absence of one. Holding position reads as
   // attention — something has his interest — and it gives the movements that
@@ -126,23 +147,108 @@ void choose_target(uint32_t now_ms) {
   moving = true;
 }
 
+// Signed offset toward "up", regardless of which end of the travel that is.
+int16_t toward_up(int16_t from, int16_t degrees) {
+  const bool up_is_high = config::PERISCOPE_ANGLE_UP > config::PERISCOPE_ANGLE_DOWN;
+  return clamp_angle(from + (up_is_high ? degrees : -degrees));
+}
+
+void run_script(uint32_t now_ms) {
+  in_gesture = true;
+  script_at = 0;
+  target = script[0].angle;
+  slew_dps = script[0].dps;
+  moving = true;
+  dwell_until_ms = now_ms + script[0].hold_ms;
+  step.reset(now_ms);
+}
+
+// Yes: nod up and down about a centre, ending back where it started. Slower
+// than a flourish on purpose — it has to read as an answer, not a twitch.
+void build_nod(uint32_t now_ms) {
+  const int16_t centre = clamp_angle(angle_tenths / 10);
+  const int16_t up = toward_up(centre, config::PERISCOPE_NOD_DEGREES / 2);
+  const int16_t down = toward_up(centre, -(config::PERISCOPE_NOD_DEGREES / 2));
+
+  script_len = 0;
+  for (uint8_t i = 0; i < config::PERISCOPE_NOD_COUNT && script_len + 2 <= MAX_STEPS; ++i) {
+    script[script_len++] = {up, config::PERISCOPE_NOD_HOLD_MS, config::PERISCOPE_NOD_DPS};
+    script[script_len++] = {down, config::PERISCOPE_NOD_HOLD_MS, config::PERISCOPE_NOD_DPS};
+  }
+  if (script_len < MAX_STEPS) {
+    script[script_len++] = {centre, 0, config::PERISCOPE_NOD_DPS};
+  }
+
+  run_script(now_ms);
+}
+
+// No: drop decisively, sag, and come back up only reluctantly. The hinge moves
+// in one axis only, so a head-shake is not available — a fast fall and a slow
+// recovery is the closest this mechanism gets to refusal.
+void build_dip(uint32_t now_ms) {
+  const int16_t here = clamp_angle(angle_tenths / 10);
+  const int16_t low = toward_up(here, -(int16_t)config::PERISCOPE_DIP_DEGREES);
+  const int16_t sag = toward_up(low, config::PERISCOPE_DIP_DEGREES / 4);
+
+  script_len = 0;
+  script[script_len++] = {low, config::PERISCOPE_DIP_HOLD_MS, config::PERISCOPE_DIP_DPS};
+  script[script_len++] = {sag, config::PERISCOPE_DIP_HOLD_MS, config::PERISCOPE_DIP_DPS / 2};
+  script[script_len++] = {low, config::PERISCOPE_DIP_HOLD_MS * 2, config::PERISCOPE_DIP_DPS};
+  // Deliberately slow on the way back — the reluctance is the message.
+  script[script_len++] = {here, 0, config::PERISCOPE_NOD_DPS / 2};
+
+  run_script(now_ms);
+}
+
+// Waking up: lift the head out of park, overshoot slightly, settle. The settle
+// is what makes it read as something coming to rather than a motor being told
+// to go somewhere.
+void build_wake(uint32_t now_ms) {
+  const int16_t here = clamp_angle(angle_tenths / 10);
+  const int16_t top = toward_up(here, config::PERISCOPE_WAKE_RISE);
+  const int16_t settled = toward_up(top, -(int16_t)config::PERISCOPE_WAKE_SETTLE);
+
+  script_len = 0;
+  script[script_len++] = {top, config::PERISCOPE_WAKE_HOLD_MS,
+                          config::PERISCOPE_WAKE_DPS};
+  script[script_len++] = {settled, 0,
+                          (uint8_t)(config::PERISCOPE_WAKE_DPS / 2)};
+
+  run_script(now_ms);
+}
+
+// Going to sleep: one last small lift, then a slow sag into park. Slow on
+// purpose — tempo is the difference between this and the wake, and that
+// difference is the whole signal to someone who cannot see the dome.
+void build_sleep(uint32_t now_ms) {
+  const int16_t here = clamp_angle(angle_tenths / 10);
+  const int16_t lift = toward_up(here, config::PERISCOPE_SLEEP_LIFT);
+
+  script_len = 0;
+  script[script_len++] = {lift, config::PERISCOPE_SLEEP_HOLD_MS,
+                          config::PERISCOPE_SLEEP_DPS};
+  script[script_len++] = {(int16_t)config::PERISCOPE_PARK, 0,
+                          config::PERISCOPE_SLEEP_DPS};
+
+  run_script(now_ms);
+}
+
 void on_mode_change(mode::Mode m, uint32_t now_ms) {
+  in_gesture = false;
+
   if (m == mode::Mode::Active) {
     attach();
     focus = (config::PERISCOPE_ANGLE_MIN + config::PERISCOPE_ANGLE_MAX) / 2;
     was_large_move = false;
-    choose_target(now_ms);
+    build_wake(now_ms);
   } else {
-    // Stow, then let go. The park move still slews rather than snapping, so it
-    // is handled by the normal path; release() happens once it arrives.
-    target = config::PERISCOPE_PARK;
-    moving = true;
-    dwell_until_ms = now_ms;
-    slew_dps = config::PERISCOPE_SLEW_CALM_DPS;
+    // Must stay attached to move — release() happens at the end of the stow
+    // script, not here, or the servo would go limp before it had parked.
+    attach();
+    build_sleep(now_ms);
   }
 
   last_mode = m;
-  step.reset(now_ms);
 }
 
 }  // namespace
@@ -159,6 +265,7 @@ void begin() {
   moving = false;
 
   last_mode = mode::get();
+  step.reset(millis());
   if (last_mode == mode::Mode::Active) {
     on_mode_change(last_mode, millis());
   }
@@ -193,15 +300,57 @@ void update(uint32_t now_ms) {
     return;
   }
 
-  // Arrived. In standby that means the stow is finished and the servo can stop
-  // holding; in active it means it is time to decide where to look next.
+  // Arrived at the current target.
+  if ((int32_t)(now_ms - dwell_until_ms) < 0) {
+    return;
+  }
+
+  // A running script outranks the standby release: the stow gesture has to
+  // finish before the servo is allowed to go limp, or it would sag halfway
+  // through instead of settling into park.
+  if (in_gesture) {
+    ++script_at;
+    if (script_at < script_len) {
+      target = script[script_at].angle;
+      slew_dps = script[script_at].dps;
+      dwell_until_ms = now_ms + script[script_at].hold_ms;
+      moving = true;
+      return;
+    }
+
+    in_gesture = false;
+
+    if (m != mode::Mode::Active) {
+      release();
+      return;
+    }
+
+    // Fold the finish back into normal scanning from wherever it ended up,
+    // rather than snapping back to the old focus.
+    focus = clamp_angle(angle_tenths / 10);
+    was_large_move = false;
+    choose_target(now_ms);
+    return;
+  }
+
   if (m != mode::Mode::Active) {
     release();
     return;
   }
 
-  if ((int32_t)(now_ms - dwell_until_ms) >= 0) {
-    choose_target(now_ms);
+  choose_target(now_ms);
+}
+
+void answer(bool yes, uint32_t now_ms) {
+  if (mode::get() != mode::Mode::Active) {
+    return;
+  }
+
+  attach();
+  if (yes) {
+    build_nod(now_ms);
+  } else {
+    build_dip(now_ms);
   }
 }
 
@@ -226,6 +375,7 @@ void flourish(uint32_t now_ms) {
                : config::PERISCOPE_ANGLE_MAX - span / 6;
   }
 
+  in_gesture = false;  // a trigger interrupts an answer in progress
   focus = clamp_angle(next);
   target = focus;
   moving = true;

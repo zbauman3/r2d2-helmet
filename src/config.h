@@ -72,12 +72,19 @@ static_assert(GRID_ROWS * CELL_H == SCREEN_H, "grid must tile the screen exactly
 // How often the grid mutates, and how much of it changes each time. Real logic
 // displays update fast and irregularly; too slow reads as a screensaver, too
 // fast reads as static.
-// The grid's rhythm tracks agitation, same as the voice and the lights — see
-// interaction::pace(). Calm is deliberately unhurried; a logic display that
-// strobes constantly reads as a fault light rather than a machine thinking.
-constexpr uint16_t GRID_TICK_CALM_MS     = 170;
-constexpr uint16_t GRID_TICK_AGITATED_MS = 70;
-constexpr uint8_t  GRID_CHURN_PCT        = 25;  // cells re-rolled per tick
+// The grid's rhythm tracks arousal, same as the voice, the lights and the
+// periscope — see arousal::pace(). Calm is deliberately unhurried; a logic
+// display that strobes constantly reads as a fault light rather than a machine
+// thinking.
+//
+// BOTH the rate and the amount scale. Rate alone was too subtle to notice: the
+// old 170->70 ms was a 2.4x range, and cells-per-second is what the eye
+// actually reads. Scaling churn as well makes it roughly 9x between calm and
+// maximally wound up, which is unmistakable.
+constexpr uint16_t GRID_TICK_CALM_MS     = 210;
+constexpr uint16_t GRID_TICK_AGITATED_MS = 48;
+constexpr uint8_t  GRID_CHURN_CALM_PCT   = 18;  // cells re-rolled per tick
+constexpr uint8_t  GRID_CHURN_HOT_PCT    = 58;
 
 // The 5394 breaks out no TE pin, so writes cannot be synced to the panel's
 // refresh and a cell caught mid-scan shows a torn edge for one frame. That is
@@ -92,9 +99,25 @@ constexpr uint8_t GRID_NEARBY_PCT = 75;
 
 // The trigger button's screen flourish: a short window of faster, heavier churn
 // so the panel visibly reacts rather than carrying on at its idle rhythm.
-constexpr uint16_t GRID_BURST_MS        = 700;
-constexpr uint16_t GRID_BURST_TICK_MS   = 45;
-constexpr uint8_t  GRID_BURST_CHURN_PCT = 70;
+//
+// RELATIVE to the current arousal pace, not absolute. A fixed burst was a bug
+// in disguise: at 45 ms / 70% it ran FASTER than the arousal ceiling, so every
+// trigger press slammed the grid past maximum regardless of how wound up he
+// actually was — which buried the whole arousal ramp underneath it. The ramp
+// was working; it just could not be seen through the accent on top of it.
+//
+// As a proportion, a burst reads as "faster than whatever is happening now" at
+// every level, which is what an accent is supposed to be.
+constexpr uint16_t GRID_BURST_MS = 700;
+
+constexpr uint8_t GRID_BURST_TICK_PCT = 55;  // of the current tick period
+constexpr uint8_t GRID_BURST_CHURN_X  = 2;   // multiplier on current churn
+
+// Ceilings, so a burst at full arousal cannot outrun the SPI bus. A cell is
+// 1680 bytes; at 45 ms / 65% that is ~1.2 MB/s against roughly 3 MB/s available
+// at 24 MHz, which leaves comfortable headroom.
+constexpr uint16_t GRID_BURST_TICK_FLOOR_MS = 45;
+constexpr uint8_t  GRID_BURST_CHURN_CEIL_PCT = 65;
 
 // --- Dome lights (PSIs) ----------------------------------------------------
 //
@@ -150,6 +173,47 @@ constexpr uint8_t PERISCOPE_ANGLE_MIN = 15;
 constexpr uint8_t PERISCOPE_ANGLE_MAX = 165;
 constexpr uint8_t PERISCOPE_PARK      = 20;  // stowed position for standby
 
+// Which end of the travel points the periscope upward. If the hinge turns out
+// to be mirrored once it is assembled, swap these two — every gesture is
+// written in terms of UP and DOWN rather than raw angles so that this is the
+// only place the physical direction is encoded.
+constexpr uint8_t PERISCOPE_ANGLE_UP   = PERISCOPE_ANGLE_MAX;
+constexpr uint8_t PERISCOPE_ANGLE_DOWN = PERISCOPE_ANGLE_MIN;
+
+// Yes: a slow, deliberate nod. Slower than the flourish on purpose — it has to
+// read as an answer, not a twitch.
+constexpr uint8_t  PERISCOPE_NOD_DEGREES = 34;
+constexpr uint8_t  PERISCOPE_NOD_COUNT   = 2;
+constexpr uint8_t  PERISCOPE_NOD_DPS     = 110;
+constexpr uint16_t PERISCOPE_NOD_HOLD_MS = 60;
+
+// Wake: a brisk lift out of the parked position with a small settle at the top,
+// run on entry to active mode.
+//
+// Its real job is CONFIRMATION TO THE WEARER. The dome lights and the screen are
+// above their head and invisible to them, so servo movement — felt through the
+// shell and heard up close — is the only channel that can report which mode the
+// costume just entered.
+constexpr uint8_t  PERISCOPE_WAKE_DPS     = 95;
+constexpr uint8_t  PERISCOPE_WAKE_RISE    = 70;  // degrees up from park
+constexpr uint8_t  PERISCOPE_WAKE_SETTLE  = 14;  // fall-back after the rise
+constexpr uint16_t PERISCOPE_WAKE_HOLD_MS = 200;
+
+// Sleep: a small last lift, then a slow droop into park. Deliberately different
+// in tempo from the wake — the wearer needs to know WHICH way the toggle went,
+// not merely that something moved, and a brisk rise versus a slow sag is
+// distinguishable without seeing it.
+constexpr uint8_t  PERISCOPE_SLEEP_DPS     = 42;
+constexpr uint8_t  PERISCOPE_SLEEP_LIFT    = 18;
+constexpr uint16_t PERISCOPE_SLEEP_HOLD_MS = 260;
+
+// No: a dip downward and a slump. The hinge only moves vertically, so a
+// head-shake is not available — a decisive drop and a reluctance to come back
+// up is the closest thing to "no" this mechanism can say.
+constexpr uint8_t  PERISCOPE_DIP_DEGREES = 42;
+constexpr uint8_t  PERISCOPE_DIP_DPS     = 150;
+constexpr uint16_t PERISCOPE_DIP_HOLD_MS = 260;
+
 // Update period. 20 ms matches the servo's own 50 Hz frame — stepping the
 // commanded angle faster than the servo is refreshed just wastes work.
 constexpr uint16_t PERISCOPE_STEP_MS = 20;
@@ -178,6 +242,24 @@ constexpr uint8_t PERISCOPE_RECHECK_PCT  = 45;  // double-take after a big move
 // breadboard out to a button buried in the costume shell is long and unshielded,
 // which argues for the higher end of the usual range rather than the lower.
 constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;
+
+// D2 gesture timing.
+//
+// D2 has NO single-press action on purpose — one press is dead, so the button
+// can be brushed by accident inside a costume without consequence. That is also
+// what makes click-counting viable here: with nothing to fire immediately, the
+// wait-and-see window costs no latency. On D3, where a tap must land instantly,
+// counting clicks would delay every chirp by the width of this window.
+constexpr uint16_t BUTTON_MULTI_GAP_MS = 400;   // max gap between counted presses
+constexpr uint16_t BUTTON_HOLD_MS      = 1000;  // press-and-hold to toggle mode
+
+// --- Mood ------------------------------------------------------------------
+//
+// How long a deliberate yes/no colours the whole costume. Long enough for the
+// periscope to finish a nod, which is the slowest of the three responses.
+constexpr uint16_t MOOD_HOLD_MS = 1700;
+
+// --- Buttons ---------------------------------------------------------------
 
 // --- Audio -----------------------------------------------------------------
 
@@ -229,14 +311,39 @@ constexpr uint8_t VOICE_TILT_PCT     = 40;  // level reduction at the ceiling
 // the one route to "excited" that also hurts.
 constexpr uint8_t AGITATION_PITCH_PCT = 12;
 
-// --- Interaction pattern ---------------------------------------------------
+// Safety net for the core1 "finished" reply. If one were ever lost, core0 would
+// consider the voice busy forever and go permanently silent. The longest
+// utterance any recipe can produce is well under half this.
+constexpr uint16_t AUDIO_BUSY_TIMEOUT_MS = 4000;
+
+// --- Arousal ---------------------------------------------------------------
 //
-// Presses inside this window read as one escalating exchange rather than as
-// independent events. Agitation drives which cue gets picked, so hammering the
-// button makes R2 progressively more strung out instead of just louder.
-constexpr uint16_t ESCALATE_WINDOW_MS      = 2400;
-constexpr uint8_t  AGITATION_STEP          = 58;
-constexpr uint8_t  AGITATION_DECAY_PER_SEC = 40;
+// The costume's one shared tempo metric — see arousal.h. Presses inside this
+// window read as one escalating exchange rather than as independent events.
+// Arousal drives which cue gets picked AND the rhythm of every subsystem, so
+// hammering the button winds the whole thing up rather than just the voice.
+// Arousal COLLAPSES to zero this long after the last press rather than gliding
+// down over several seconds. Escalating requires sustained pressing; the moment
+// you stop, the exchange is over and he is calm again.
+//
+// This is also the escalation window — the two are deliberately one number. A
+// press arriving after the collapse starts a fresh conversation from zero, which
+// is the only self-consistent reading: if the level is already gone, there is
+// nothing left to escalate from.
+constexpr uint16_t AROUSAL_HOLD_MS = 600;
+
+// Applies only WITHIN the hold window, where it barely registers — a few points
+// between rapid presses. It exists so the level is not perfectly flat while a
+// flurry is in progress.
+constexpr uint8_t AGITATION_DECAY_PER_SEC = 40;
+
+constexpr uint8_t AGITATION_STEP = 58;
+
+// The scream pins arousal at maximum for this long, overriding the collapse —
+// the whole costume goes frantic for the duration. Slightly longer than the
+// utterance itself on purpose, so he stays rattled for a beat afterwards
+// instead of snapping back to calm the instant the sound stops.
+constexpr uint16_t SCREAM_PIN_MS = 2600;  // sample is 2248 ms; the rest is the tail
 
 // --- Bench aids ------------------------------------------------------------
 

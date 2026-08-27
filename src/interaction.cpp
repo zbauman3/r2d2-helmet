@@ -1,5 +1,6 @@
 #include "interaction.h"
 
+#include "arousal.h"
 #include "audio.h"
 #include "config.h"
 #include "cue.h"
@@ -8,18 +9,21 @@
 namespace interaction {
 namespace {
 
-// Agitation is stored as "what it was at the last press", and the current value
-// is DERIVED from how long ago that was. It is deliberately not a running total
-// that gets decremented.
-//
-// The decrementing version worked only because it was read once per press. Now
-// that the display and the lights sample it every pass through loop(), a
-// mutating read would subtract the same elapsed time over and over and collapse
-// to zero within milliseconds. Reads must be pure.
-uint8_t peak_level = 0;
-uint32_t last_press_ms = 0;
 cue::Kind last_kind = cue::Kind::None;
-bool ever_pressed = false;
+
+// One bit, not a counter. Ten presses during one chirp should produce one
+// follow-up, not ten — the flurry is expressed through arousal, which is
+// already climbing, rather than through a backlog to work off afterwards.
+bool pending = false;
+
+// The HIGHEST arousal seen while the throttle was holding.
+//
+// This has to be latched rather than re-read at fire time. Arousal collapses to
+// zero AROUSAL_HOLD_MS after the last press, and a queued utterance typically
+// fires a second or more later — so asking again would reliably answer "calm",
+// and a frantic flurry would come out as a mild chirp. The screen would show the
+// escalation and the voice would not.
+uint8_t pending_level = 0;
 
 // Weights per cue, in three bands of agitation. Reading down a column shows how
 // the register shifts: calm R2 chatters and muses, wound-up R2 alarms and
@@ -30,22 +34,12 @@ constexpr uint8_t kCalm[]     = {14, 20, 30,  2, 16, 18};
 constexpr uint8_t kRoused[]   = {22, 18, 26, 14, 12,  8};
 constexpr uint8_t kAgitated[] = {24,  8, 14, 42,  8,  4};
 
-constexpr uint8_t kFirstKind = (uint8_t)cue::Kind::Acknowledge;
+constexpr uint8_t kFirstKind = (uint8_t)cue::FIRST_SELECTABLE;
 constexpr uint8_t kKindCount = sizeof(kCalm);
 
-static_assert(kFirstKind + kKindCount == (uint8_t)cue::Kind::Stop,
-              "weight tables must cover every selectable cue");
-
-// Pure. Safe to call as often as you like, from anywhere on core0.
-uint8_t level_at(uint32_t now_ms) {
-  if (!ever_pressed) {
-    return 0;
-  }
-
-  const uint32_t elapsed = now_ms - last_press_ms;
-  const uint32_t lost = (elapsed * config::AGITATION_DECAY_PER_SEC) / 1000;
-  return (lost >= peak_level) ? 0 : (uint8_t)(peak_level - lost);
-}
+static_assert(kFirstKind + kKindCount == (uint8_t)cue::END_SELECTABLE,
+              "weight tables must cover every randomly-selectable cue, and stop "
+              "short of the deliberate answers");
 
 const uint8_t* band_for(uint8_t level) {
   if (level < 85) return kCalm;
@@ -84,36 +78,76 @@ cue::Kind choose(uint8_t level) {
 }  // namespace
 
 void begin() {
-  peak_level = 0;
   last_kind = cue::Kind::None;
-  ever_pressed = false;
+  pending = false;
+  pending_level = 0;
 }
 
-uint8_t agitation(uint32_t now_ms) {
-  return level_at(now_ms);
+void answer(bool yes, uint32_t now_ms) {
+  // Current agitation colours the delivery — a wound-up "no" comes out sharper
+  // and faster than a calm one — but arousal::bump() is deliberately NOT called,
+  // so this neither escalates nor resets the exchange.
+  // A deliberate answer supersedes anything the throttle was holding: being
+  // asked a question outranks a chirp that was still waiting its turn.
+  pending = false;
+  pending_level = 0;
+  audio::request(yes ? cue::Kind::Affirm : cue::Kind::Decline, arousal::level(now_ms));
+
+  // last_kind is deliberately not updated either. The no-repeat rule exists to
+  // stop the random rotation stalling; an answer is outside that rotation and
+  // should not block whatever neutral cue comes next.
 }
 
-uint16_t pace(uint16_t calm_ms, uint16_t agitated_ms, uint32_t now_ms) {
-  const int32_t span = (int32_t)agitated_ms - (int32_t)calm_ms;
-  return (uint16_t)((int32_t)calm_ms + (span * level_at(now_ms)) / 255);
+void speak(uint8_t level) {
+  const cue::Kind kind = choose(level);
+
+  if (audio::request(kind, level)) {
+    last_kind = kind;
+  }
+}
+
+void scream(uint32_t now_ms) {
+  pending = false;
+  pending_level = 0;
+
+  // Deliberately does NOT check audio::busy(). A scream cuts in — core1's
+  // voice::start() replaces whatever is mid-utterance, which is the whole point.
+  audio::request(cue::Kind::Scream, 255);
 }
 
 void trigger(uint32_t now_ms) {
-  uint16_t level = level_at(now_ms);
+  // The press always counts toward arousal, whether or not it gets to speak.
+  // That is what makes a flurry escalate: the level climbs with every press,
+  // and the next utterance to actually fire reflects all of them.
+  arousal::bump(now_ms);
 
-  // Only presses inside the window escalate. A press after a long pause is a
-  // fresh conversation, not a continuation of the last one.
-  if (ever_pressed && (now_ms - last_press_ms) < config::ESCALATE_WINDOW_MS) {
-    level += config::AGITATION_STEP;
+  const uint8_t level = arousal::level(now_ms);
+
+  if (audio::busy(now_ms)) {
+    pending = true;
+    if (level > pending_level) {
+      pending_level = level;
+    }
+    return;
   }
 
-  peak_level = (level > 255) ? 255 : (uint8_t)level;
-  last_press_ms = now_ms;
-  ever_pressed = true;
+  speak(level);
+}
 
-  const cue::Kind kind = choose(peak_level);
-  audio::request(kind, peak_level);
-  last_kind = kind;
+void update(uint32_t now_ms) {
+  if (!pending || audio::busy(now_ms)) {
+    return;
+  }
+
+  pending = false;
+
+  // Whichever is higher: the peak of the flurry that queued this, or the level
+  // right now if pressing has continued. Never lower than the moment that
+  // earned it.
+  const uint8_t level = max(pending_level, arousal::level(now_ms));
+  pending_level = 0;
+
+  speak(level);
 }
 
 }  // namespace interaction

@@ -101,6 +101,48 @@ There is also no software mute: `/SD` is tied to `VDD` on the STEMMA board, so t
 
 Button 2 fires in either mode, so noise does not require lighting up first.
 
+### The scream is not a synth patch
+
+Everything else in R2's vocabulary descends from the ARP 2600 and is dominated by its fundamental. **The scream is Ben Burtt's own voice** — he screamed under a desk in the basement of Lucas's house, and it was sped up. Burtt's account: *"I just made a scream. I just screamed. Maybe there was some stress behind it."*
+
+**It is therefore the one sound that is a recording, not synthesis.** `cue::Kind::Scream` plays `SCREAM_PCM` from flash via `sample.cpp` when that asset is present; everything else always goes through `voice.cpp`. Two oscillators and an envelope were never going to reproduce a human voice, and the scream is the only place in the vocabulary where that matters.
+
+`src/scream_pcm.{h,cpp}` is **untracked and optional**. `audio.cpp` detects it with `__has_include` and falls back to the synthesised recipe below when it is absent, so a clone without it compiles and behaves sensibly. The interface those files must satisfy is documented in `.gitignore`.
+
+The synthesised `Scream` recipe in `phrase.cpp` is kept both as that fallback and to keep the recipe table index-aligned with `cue::Kind`. Its three defining traits:
+
+- **Harmonically rich** (`harm 60`, against 8–25 for everything else). A voice has real harmonic content; this is the single biggest thing separating a scream from a whistle.
+- **Fast vibrato** (~13 Hz). Natural vocal vibrato is around 5 Hz — tape-speeding it up is what lands it there.
+- **An arc, not a sweep.** The `arc` flag makes the syllable leap to its peak in the first fifth and spend the remaining four fifths falling. That is the shape of a voice; overshoot-and-settle is the shape of a servo, and no anchor-hop contour produces it.
+
+The scream also **interrupts** whatever is playing rather than queueing behind it, and pins arousal at maximum for `SCREAM_PIN_MS` so the screen, PSIs and periscope go frantic alongside it.
+
+Source: [Soundeffects Wiki — Skywalker Astromech Critical Scream](https://soundeffects.fandom.com/wiki/SKYWALKER_ASTROMECH_CRITICAL_SCREAM)
+
+### Deliberate answers
+
+`Affirm` and `Decline` are never chosen at random. They sit past `cue::END_SELECTABLE`, so the weight tables in `interaction.cpp` stop short of them and they only fire when requested by name via `interaction::answer()`.
+
+Neither escalates agitation or updates `last_kind` — an answer is outside the random rotation and should not block whatever neutral cue comes next. It does read current agitation, so a wound-up "no" comes out sharper than a calm one.
+
+The recipes lean on `terminal` (+1 lifts the final syllable, −1 drops it), which is what carries yes-ness and no-ness. `Affirm` has no vibrato and almost no harmonic content, because wobble reads as uncertainty and an answer has to sound sure of itself. `Decline` carries enough harmonic content to sound flat and unimpressed rather than merely sad.
+
+### Arousal collapses; it does not glide
+
+`level()` returns zero once `AROUSAL_HOLD_MS` (600 ms) has passed since the last press. There is no decay tail. Escalating requires *sustained* pressing and ends the moment you stop, which makes the level something you steer rather than something you wait out.
+
+The same constant is the escalation window — deliberately one number. A press arriving after the collapse starts fresh from zero, which is the only self-consistent reading: if the level is already gone there is nothing left to build on.
+
+**Anything that reflects a flurry after the fact must LATCH the level it saw.** `interaction.cpp` keeps `pending_level` for exactly this: a throttled utterance typically fires a second or more after the press that queued it, so re-reading arousal at fire time would reliably answer "calm" and a frantic flurry would come out as a mild chirp — visible on the screen, absent from the voice.
+
+### Presses are throttled, not queued
+
+A trigger press while R2 is mid-utterance does **not** interrupt him and does **not** stack up. It raises arousal and sets a single pending bit; whatever the press count, exactly one follow-up fires when the current utterance finishes, chosen at the arousal level reached *by then*.
+
+Cutting an utterance short to start the next was the original behaviour and it made a flurry sound like stuttering machinery rather than someone getting steadily more worked up.
+
+Core0 learns when to release the pending press from core1's `Finished` reply on the return FIFO. That reply fires when the last sample has been *generated*, roughly a buffer (~46 ms) before it is heard — which is what makes consecutive utterances butt together seamlessly instead of leaving a buffer-length hole.
+
 ### Pattern selection — built, in `interaction.cpp`
 
 Core0 policy, not a uniform random pick. Two things shape it:

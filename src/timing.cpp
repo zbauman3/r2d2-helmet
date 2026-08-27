@@ -14,4 +14,13 @@ bool Interval::due(uint32_t now_ms) {
   return true;
 }
 
+void Interval::retune(uint32_t period_ms, uint32_t now_ms) {
+  period_ = period_ms;
+
+  const uint32_t soonest = now_ms + period_ms;
+  if ((int32_t)(next_ - soonest) > 0) {
+    next_ = soonest;
+  }
+}
+
 }  // namespace timing

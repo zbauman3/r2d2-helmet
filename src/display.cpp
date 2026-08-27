@@ -4,9 +4,10 @@
 #include <Adafruit_ST7789.h>
 #include <SPI.h>
 
+#include "arousal.h"
 #include "config.h"
-#include "interaction.h"
 #include "mode.h"
+#include "mood.h"
 #include "rng.h"
 #include "timing.h"
 
@@ -70,6 +71,14 @@ constexpr uint8_t kWeights[COLOUR_COUNT] = {
 // How far along the ramp a "nearby" transition may travel.
 constexpr uint8_t kNearbySpan = 2;
 
+// Mood restricts the palette to one end of the ramp rather than recolouring it.
+// Because the ramp is sorted by brightness and the warm colours happen to sit
+// in the middle, a negative mood lands on RED/ORANGE/AMBER and a positive one
+// on TEAL/CYAN/WHITE — with OFF available to both so the grid keeps its texture
+// instead of turning into a solid block.
+constexpr uint8_t kNegLo = RED, kNegHi = AMBER;
+constexpr uint8_t kPosLo = TEAL, kPosHi = WHITE;
+
 // --- State -----------------------------------------------------------------
 
 constexpr uint8_t kCells = config::GRID_COLS * config::GRID_ROWS;
@@ -96,6 +105,7 @@ uint32_t burst_until_ms = 0;
 // several modules watch mode, and whichever one read the flag first would clear
 // it for the others.
 mode::Mode last_mode = mode::Mode::Standby;
+mood::Mood last_mood = mood::Mood::Neutral;
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -119,6 +129,13 @@ uint8_t pick_in_range(uint8_t lo, uint8_t hi) {
 }
 
 uint8_t pick_any() {
+  const mood::Mood m = mood::get(millis());
+  if (m == mood::Mood::Negative) {
+    return rng::chance(30) ? OFF : pick_in_range(kNegLo, kNegHi);
+  }
+  if (m == mood::Mood::Positive) {
+    return rng::chance(30) ? OFF : pick_in_range(kPosLo, kPosHi);
+  }
   return pick_in_range(0, COLOUR_COUNT - 1);
 }
 
@@ -127,6 +144,12 @@ uint8_t pick_any() {
 // close enough that the split does not register. The rest of the time it jumps
 // anywhere, which is what keeps the panel from looking like it is breathing.
 uint8_t pick_near(uint8_t current) {
+  // A mood is a statement, so it overrides the nearby-transition smoothing
+  // entirely — the grid should change to match the moment, not drift there.
+  if (mood::get(millis()) != mood::Mood::Neutral) {
+    return pick_any();
+  }
+
   if (!rng::chance(config::GRID_NEARBY_PCT)) {
     return pick_any();
   }
@@ -272,19 +295,47 @@ void update(uint32_t now_ms) {
     end_burst();
   }
 
+  // Repaint immediately on a mood edge instead of waiting for the next tick, so
+  // an answer lands with the sound rather than up to 170 ms behind it.
+  const mood::Mood m_now = mood::get(now_ms);
+  if (m_now != last_mood) {
+    last_mood = m_now;
+    scatter();
+    render();
+    tick.reset(now_ms);
+    return;
+  }
+
+  // Both the rate and the amount scale with arousal. Cells-per-second is what
+  // the eye actually reads, so rate alone was too subtle to notice.
+  uint16_t period = arousal::pace(config::GRID_TICK_CALM_MS,
+                                  config::GRID_TICK_AGITATED_MS, now_ms);
+  uint8_t rate = (uint8_t)arousal::pace(config::GRID_CHURN_CALM_PCT,
+                                        config::GRID_CHURN_HOT_PCT, now_ms);
+
+  if (bursting) {
+    // Proportional, so the accent sits above whatever is currently happening
+    // instead of jumping to a fixed maximum and hiding the arousal ramp.
+    period = max<uint16_t>((uint16_t)(period * config::GRID_BURST_TICK_PCT / 100),
+                           config::GRID_BURST_TICK_FLOOR_MS);
+    rate = min<uint8_t>((uint8_t)(rate * config::GRID_BURST_CHURN_X),
+                        config::GRID_BURST_CHURN_CEIL_PCT);
+  }
+
+  // Retune BEFORE testing the deadline, not after firing. due() commits the next
+  // deadline using whatever period is current, so setting it afterwards leaves
+  // one stale interval in the way — long enough that the grid visibly lags the
+  // thing that wound it up. retune() also pulls a pending deadline in when the
+  // period shrinks, so speeding up takes effect on this tick rather than the
+  // next one.
+  tick.retune(period, now_ms);
+
   if (!tick.due(now_ms)) {
     return;
   }
 
-  churn(bursting ? config::GRID_BURST_CHURN_PCT : config::GRID_CHURN_PCT);
+  churn(rate);
   render();
-
-  // Re-read arousal every tick rather than only when it changes. Agitation
-  // decays continuously, so the grid eases back down instead of stepping.
-  if (!bursting) {
-    tick.set_period(interaction::pace(config::GRID_TICK_CALM_MS,
-                                      config::GRID_TICK_AGITATED_MS, now_ms));
-  }
 }
 
 void flourish(uint32_t now_ms) {
@@ -296,7 +347,7 @@ void flourish(uint32_t now_ms) {
 
   bursting = true;
   burst_until_ms = now_ms + config::GRID_BURST_MS;
-  tick.set_period(config::GRID_BURST_TICK_MS);
+  // Period is derived from arousal in update(), so nothing to set here.
 
   // Repaint immediately rather than waiting for the next tick, so the reaction
   // lands on the press instead of up to a tick later.

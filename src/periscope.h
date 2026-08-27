@@ -25,4 +25,8 @@ void update(uint32_t now_ms);
 // Does nothing in standby, matching the display and the lights.
 void flourish(uint32_t now_ms);
 
+// A deliberate yes or no. Runs a scripted gesture — a nod, or a decisive drop
+// and slow recovery — that overrides normal scanning until it finishes.
+void answer(bool yes, uint32_t now_ms);
+
 }  // namespace periscope

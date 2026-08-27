@@ -14,7 +14,7 @@ Bring subsystems up **one at a time, in this order**, and do not add the next un
 3. **Audio alone.** Display code still present but not blitting. Confirms the filter, the amp, and the core1 split.
 4. **Pixels alone.** Confirms logic level and colour.
 5. **All three together.** This is where power problems surface. Have the bulk cap fitted before you get here, not after.
-6. **Servo**, once the `USB+ → RAW` jumper is closed and its bulk cap is fitted. Bring it up with the speaker unplugged first — if the fuse is going to trip, isolating the two biggest loads tells you which one did it.
+6. **Servo.** Requires the `USB+ → RAW` jumper closed (it is, on this build) and its bulk cap fitted at the servo. Bring it up with the speaker unplugged first — isolating the two biggest loads tells you which one is at fault if the rail sags.
 7. **Buttons last.** Trivial, and easier to debug once everything they drive already works. Bring up the mode button (`D2`) before the trigger button (`D3`) — mode is the outer state, and a trigger firing into an unknown mode is harder to read.
 
 Stages 2 through 5 do not need the buttons: the firmware accepts **`m` to toggle mode and `t` to fire a trigger** over serial at 115200. That is deliberate, because the wiring order puts the buttons last and the display would otherwise be untestable until the very end.
@@ -39,7 +39,7 @@ If the backlight is on but the screen is black, the panel has power and the SPI 
 
 | Symptom | Almost certainly |
 | --- | --- |
-| Random resets, only once audio *and* lights run together | Brownout. The bulk cap at the amp is missing, too small, or wired backwards. Class-D transients sag `RAW`, and the 500 mA polyfuse's series resistance makes it worse |
+| Random resets, only once audio *and* lights run together | Brownout. The bulk cap at the amp is missing, too small, or wired backwards. Class-D transients sag `RAW` faster than the power bank can respond |
 | Speaker hums, or outputs nothing at all | Floating amp ground. Every ground must tie together — MCU, speaker, pixels, display |
 | Audio distorts badly at any volume | Trim pot too high. Gain is a fixed 24 dB and 3.3 V p-p will clip hard |
 | Audible whistle around 10 kHz | PWM carrier set near 260 kHz, beating against the amp's 250 kHz switching. Use 130 kHz |
@@ -51,8 +51,8 @@ If the backlight is on but the screen is black, the panel has power and the SPI 
 | Pixels dark or showing garbage | Data logic level. Confirm pixel `V+` goes to `3V`, not `RAW` — at 5 V the threshold is 3.5 V and a 3.3 V GPIO cannot reach it |
 | Pixel whites look pink or warm | Expected at 3.3 V — blue and green dies starve first. One silicon diode from `RAW` fixes it |
 | First pixel behaves, rest do not | `DOUT`→`DIN` chain break, or the 470 Ω is in the wrong leg |
-| Whole thing dies under load, no reset | The 500 mA polyfuse tripped. Everything including the 3.3 V rail runs through it — with the servo fitted, the `USB+ → RAW` jumper must be closed |
-| Everything resets when the periscope moves | Servo inrush. Its 470 µF is missing, too small, or sited at the breakout instead of at the servo |
+| Whole thing dies under load, no reset | The polyfuse tripped — which should be impossible on this build, so **check the `USB+ → RAW` jumper is still bridged**. Failing that, the power bank's own overcurrent protection cut out |
+| Everything resets when the periscope moves | Servo inrush. Its bulk cap is missing, too small, or sited at the breakout instead of at the servo |
 | Servo buzzes continuously and gets warm | Driving into a mechanical hard stop — a stalled SG92R pulls 650 mA. Narrow `PERISCOPE_ANGLE_MIN`/`MAX` |
 | Periscope only sweeps about half its range | `attach()` using the library default 1000–2000 µs instead of the SG92R's 500–2500 |
 | A button fires several times per press | Missing or too-short software debounce. Both buttons are bare switches with no RC |

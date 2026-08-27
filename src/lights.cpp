@@ -2,9 +2,10 @@
 
 #include <Adafruit_NeoPixel.h>
 
+#include "arousal.h"
 #include "config.h"
-#include "interaction.h"
 #include "mode.h"
+#include "mood.h"
 #include "rng.h"
 #include "timing.h"
 
@@ -32,6 +33,15 @@ constexpr uint32_t GREEN  = 0x00B400;
 constexpr uint32_t YELLOW = 0x828200;
 constexpr uint32_t DARK   = 0x000000;
 
+// Mood overrides. During a deliberate yes or no both PSIs abandon their
+// canonical pairs and agree with each other — the whole dome says one thing.
+// That unanimity is the point: two pixels disagreeing reads as idle chatter,
+// which is exactly what an answer must not look like.
+constexpr uint32_t NO_A  = 0xA00000;  // red
+constexpr uint32_t NO_B  = 0x2C0000;  // deep ember, so the pair still pulses
+constexpr uint32_t YES_A = 0x00A000;  // green
+constexpr uint32_t YES_B = 0x00707A;  // cyan-teal
+
 // --- State -----------------------------------------------------------------
 
 struct Psi {
@@ -52,6 +62,7 @@ bool bursting = false;
 uint32_t burst_until_ms = 0;
 
 mode::Mode last_mode = mode::Mode::Standby;
+mood::Mood last_mood = mood::Mood::Neutral;
 
 // Set when a pixel's colour changes, cleared by push(). show() bit-bangs the
 // chain with interrupts masked, so it is worth not calling it on every pass
@@ -69,10 +80,10 @@ uint16_t flip_delay(uint32_t now_ms) {
     return config::PSI_BURST_FLIP_MS;
   }
 
-  const uint16_t lo = interaction::pace(config::PSI_FLIP_CALM_MIN_MS,
-                                        config::PSI_FLIP_HOT_MIN_MS, now_ms);
-  const uint16_t hi = interaction::pace(config::PSI_FLIP_CALM_MAX_MS,
-                                        config::PSI_FLIP_HOT_MAX_MS, now_ms);
+  const uint16_t lo = arousal::pace(config::PSI_FLIP_CALM_MIN_MS,
+                                    config::PSI_FLIP_HOT_MIN_MS, now_ms);
+  const uint16_t hi = arousal::pace(config::PSI_FLIP_CALM_MAX_MS,
+                                    config::PSI_FLIP_HOT_MAX_MS, now_ms);
   return lo + rng::below(hi - lo);
 }
 
@@ -91,7 +102,19 @@ void push() {
 
 void show_current(uint8_t index) {
   const Psi& p = psi[index];
-  set_pixel(index, p.showing_b ? p.colour_b : p.colour_a);
+  const mood::Mood m = mood::get(millis());
+
+  uint32_t a = p.colour_a;
+  uint32_t b = p.colour_b;
+  if (m == mood::Mood::Negative) {
+    a = NO_A;
+    b = NO_B;
+  } else if (m == mood::Mood::Positive) {
+    a = YES_A;
+    b = YES_B;
+  }
+
+  set_pixel(index, p.showing_b ? b : a);
 }
 
 // Restarts a PSI with a fresh randomised delay. Called on state changes so the
@@ -171,6 +194,17 @@ void update(uint32_t now_ms) {
 
   if (bursting && (int32_t)(now_ms - burst_until_ms) >= 0) {
     end_burst(now_ms);
+  }
+
+  // Repaint on the mood edge as well as on flips, otherwise a yes or no would
+  // not show up until each pixel happened to reach its next scheduled flip —
+  // up to several seconds away when calm.
+  const mood::Mood m_now = mood::get(now_ms);
+  if (m_now != last_mood) {
+    last_mood = m_now;
+    for (uint8_t i = 0; i < config::PIXEL_COUNT; ++i) {
+      show_current(i);
+    }
   }
 
   for (uint8_t i = 0; i < config::PIXEL_COUNT; ++i) {

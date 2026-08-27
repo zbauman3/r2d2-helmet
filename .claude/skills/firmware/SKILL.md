@@ -108,6 +108,6 @@ Keep the interface narrow — ideally a single "what should I be playing" value 
 | PIO state machines | 8 | 1 by NeoPixel, 1 by `Servo` (periscope) |
 | PWM slices | 8 (2 ch. each) | slice 4 entirely, by `PWMAudio` |
 | DMA | 12 channels + timers | channels *and* a DMA timer, by `PWMAudio` |
-| GPIO | 20 (18 castellated + 2 on STEMMA QT) | 10 used |
+| GPIO | 20 (18 castellated + 2 on STEMMA QT) | 11 used |
 
 A PIO-driven display would not be free. Pin assignments and slice overlaps are in the `hardware` skill.
