@@ -21,9 +21,45 @@ Three rules recover most of that phrasing algorithmically:
 
 Beyond that: vary utterance length, leave real silence between phrases, and let a small number of "words" repeat within an utterance — R2 stutters and doubles back.
 
+### Pacing, checked against the films
+
+Syllables sit around **150-400 ms** with real gaps between them. The first implementation used 90-200 ms with 40 ms gaps and read as a modem, not a droid. Recipe durations in `phrase.cpp` are roughly double that first pass.
+
+**Not every syllable should move.** `dwell_pct` is the chance a syllable holds its anchor instead of travelling to another one. Forcing movement on every syllable — the original behaviour — makes phrases restless: constant back-and-forth with nothing ever landing. A held syllable still carries its overshoot, so it bends and settles rather than sitting flat, and that contrast is what gives the moving syllables somewhere to go.
+
+Fewer syllables per press, too. The busiest recipes were saying too much for a single button push.
+
 ## Band limits
 
-The output filter is **−3 dB at 7.0 kHz** and the speaker is a small enclosed 8 Ω unit that rolls off up there too. Do not put significant energy above ~7 kHz and expect it to arrive. Fundamentals in the 300 Hz – 5 kHz range with their harmonics are the usable band. Full response table is in the `hardware` skill.
+The output filter is **−3 dB at 7.0 kHz** and the speaker is a small enclosed 8 Ω unit that rolls off up there too. Do not put significant energy above ~7 kHz and expect it to arrive. Full response table is in the `hardware` skill.
+
+### The real ceiling is ears, not electronics
+
+Human hearing peaks in sensitivity between roughly **2 and 5 kHz** because of ear-canal resonance. A tone there is both louder and sharper than the same amplitude anywhere else, and at close range — which is where people stand when they talk to a costume — it is genuinely painful. Tested on hardware 2026-08-26 and confirmed: fundamentals around 4 kHz hurt.
+
+Two mechanisms keep it out of that band, both in `config.h`:
+
+**Soft ceiling.** `VOICE_F_KNEE` (1700 Hz) is where log-space compression starts; `VOICE_F_MAX` (3000 Hz) is an asymptote it approaches and never reaches. `soften()` in `phrase.cpp` does the squeezing. A hard `constrain()` was the original approach and it was wrong twice over — it flattened every excited gesture onto the same pinned tone, so the phrase lost its contour at exactly the moment it should have been most expressive. Compression keeps the shape and drops the pain.
+
+| wants | gets |
+| --- | --- |
+| 1200 Hz | 1200 Hz (untouched) |
+| 2200 Hz | 2030 Hz |
+| 3000 Hz | 2258 Hz |
+| 4200 Hz | 2410 Hz |
+| 6000 Hz | 2515 Hz |
+
+**Equal-loudness taper.** `VOICE_TILT_*` backs level off as pitch climbs, up to −40% at the ceiling. Applied at control rate in `voice.cpp`, so it tracks a sweep continuously rather than being fixed per syllable — a rising gesture fades slightly as it rises, which is also what a real voice does when it strains.
+
+### Excitement must not be spent on pitch
+
+The instinct is to convey agitation by raising pitch. Resist it: that is the one route to "excited" that also hurts. `AGITATION_PITCH_PCT` is capped at 12%. Everything else carries the load instead —
+
+- **tempo**, hardest: `tighten()` compresses syllables and gaps to ~40% at full agitation
+- **stutter**: repeat probability climbs with agitation, because repetition is what panic actually sounds like
+- **wobble**: vibrato scales up, but only on cues that already wobble at rest — a calm cue should get *faster*, not develop a tremor
+
+Note that `Alarm` is deliberately **not** the highest-pitched recipe. It earns its urgency from being clipped, repetitive and wobbling.
 
 ## PWMAudio configuration
 
@@ -65,16 +101,23 @@ There is also no software mute: `/SD` is tied to `VDD` on the STEMMA board, so t
 
 Button 2 fires in either mode, so noise does not require lighting up first.
 
-### Pattern selection — not designed yet
+### Pattern selection — built, in `interaction.cpp`
 
-Which interaction fires on a press is meant to be **pattern-driven**, not a uniform random pick from a bag of sounds. That design is open. Things worth weighing when it gets built:
+Core0 policy, not a uniform random pick. Two things shape it:
 
-- Repeated presses in quick succession should read as one escalating exchange, not as independent samples.
-- Some memory of what just played, so the same utterance does not come back immediately.
-- Mode probably matters: a press in standby might warrant something shorter or grumpier than one in active mode.
-- Length variation carries more character than timbre variation — see the phrasing rules above.
+**Agitation.** Presses within `ESCALATE_WINDOW_MS` of each other escalate, so hammering the button reads as one rising exchange rather than independent samples. It decays on its own at `AGITATION_DECAY_PER_SEC`, lazily — the value is only ever read at the moment of a press, so nothing ticks it in `loop()`. Three weight bands (calm / roused / agitated) shift the register: calm R2 chatters and muses, wound-up R2 alarms and snaps. `Grumble` survives at every level because being put upon is his baseline.
 
-Do not build a placeholder random picker and call it done; the pattern logic *is* the personality.
+**Memory.** The cue that just fired is zeroed out of the next choice. Done by adjusting the weights rather than re-rolling until it differs, so a heavily-weighted cue in a lopsided band cannot spin.
+
+The escalation idea generalises and is worth reaching for elsewhere: the user specifically asked that other features be built with the same mentality.
+
+### Arousal paces the whole costume, not just the voice
+
+`interaction::pace(calm_ms, agitated_ms, now_ms)` interpolates any subsystem's own two timings by the current arousal. The display's churn rate and the PSI flip rate both go through it, so a flurry of presses speeds up the screen and the lights along with the speech, and everything eases back down together as agitation decays.
+
+Each subsystem supplies **different endpoints on purpose**. Matching them exactly reads as one clock driving everything, which is the opposite of alive.
+
+`agitation()` must stay a **pure function** of elapsed time. It is now sampled every pass through `loop()` by several modules; the original implementation decayed by subtracting on each call without advancing its reference time, which was harmless when only the trigger read it and would collapse to zero within milliseconds once anything else did.
 
 ## Where this runs
 

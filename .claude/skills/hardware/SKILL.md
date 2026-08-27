@@ -15,6 +15,7 @@ This file is the _reasoning_. The wiring tables you actually connect from — BO
 | Breadboard NeoPixel ×2 | 1312 | SK6812, 3.5–5 VDC, ~36 mA/pixel at full white             |
 | STEMMA Speaker         | 3885 | PAM8302A class-D, 1 W into 8 Ω, fixed 24 dB gain          |
 | 1.9" 320×170 IPS TFT   | 5394 | ST7789, onboard 3.3 V LDO + 3/5 V level shifter           |
+| TowerPro SG92R         | 169  | 9 g servo, 4.8 V nom (3–6 V), 2.5 kg·cm, 0.1 s/60°, **650 mA stall**, 500–2500 µs |
 
 Powered from a USB power bank into USB-C.
 
@@ -33,7 +34,7 @@ Verified against `variants/adafruit_kb2040/pins_arduino.h` (arduino-pico) and `p
 | D10        | GP10 | 5A        | TFT chip select                       |
 | SCK        | GP18 | 1A        | TFT clock (SPI0)                      |
 | MOSI       | GP19 | 1B        | TFT data (SPI0)                       |
-| D6         | GP6  | 3A        | Periscope servo — reserved, not wired |
+| D6         | GP6  | 3A        | Periscope servo (PIO-driven, not PWM) |
 
 Free: GP0/GP1 (Serial1), GP9, GP20, GP12/GP13 (STEMMA QT), GP26–GP29. GP11 is the onboard BOOT button and GP17 the onboard NeoPixel; neither is castellated.
 
@@ -63,9 +64,28 @@ Slice 1 is fully occupied: GP2/GP18 share channel A and GP3/GP19 share channel B
 
 **Everything runs through the 500 mA polyfuse**, including the 3.3 V rail: ~280 mA average, ~530 mA transient. It holds, with two consequences.
 
-The fuse's series resistance worsens transient sag, which is why **470 µF at the amp is mandatory** — class-D current spikes otherwise brown out the MCU. It shows up as random resets that only appear once audio and lights run together.
+The fuse's series resistance worsens transient sag, which is why **bulk capacitance at the amp is mandatory** — class-D current spikes otherwise brown out the MCU. It shows up as random resets that only appear once audio and lights run together.
 
-And **a periscope servo would exceed it outright** (0.5–1 A stall). The KB2040 has a `USB+ → RAW` solder jumper on the back that bypasses the fuse for up to 2 A.
+Built with **1000 µF**. The value is not tuned; anything from 220 µF up does the job, and more is better as long as it fits. Several smaller caps in parallel are marginally better than one large one, since ESR parallels along with capacitance.
+
+### The servo forces the fuse bypass
+
+With the SG92R fitted the budget no longer closes:
+
+| Load | Draw |
+| --- | --- |
+| 3.3 V rail via the LDO | ~180 mA |
+| Speaker amp | ~350 mA transient |
+| SG92R | ~150 mA moving, **650 mA stalled** |
+| Worst case | **~1180 mA** against a 500 mA fuse |
+
+**Close the `USB+ → RAW` solder jumper** on the back of the KB2040. It bypasses the polyfuse for up to 2 A from USB, leaving the power bank's own protection as the limit. Not optional once the servo is wired — without it the fuse trips on any coincidence of servo movement and an audio transient, and a tripped polyfuse looks exactly like a dead board until it cools.
+
+Fit **470 µF across the servo's supply at the servo**, not back at the breakout. Inrush is what browns out everything else, and local capacitance supplies it instead of pulling it down a shared wire. Run the servo's ground back to the common point short and thick for the same reason.
+
+The alternative, if the jumper is unappealing: feed the servo directly from the power bank through a USB breakout and share only ground with the KB2040. Electrically cleaner — the servo's spikes never touch the MCU's rail — at the cost of one more part and a second cable.
+
+A stall is the case that matters: 650 mA drawn continuously until something moves or gives. Keep `PERISCOPE_ANGLE_MIN`/`MAX` inside what the hinge mechanically allows so the horn never drives into a hard stop.
 
 Idle draw ~180 mA is well clear of the ~50–100 mA cutoff most power banks use, so no keepalive load is needed.
 

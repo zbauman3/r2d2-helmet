@@ -14,8 +14,11 @@ A project for an R2D2 costume helmet.
 | Breadboard NeoPixel ×2 | 1312 | SK6812, dome lighting behind diffuser |
 | STEMMA Speaker         | 3885 | PAM8302A class-D + 1 W 8 Ω speaker    |
 | 1.9" 320×170 IPS TFT   | 5394 | ST7789, logic display panel           |
+| TowerPro SG92R servo   | 169  | 9 g micro servo, periscope hinge      |
 
-Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, 1× 470 µF electrolytic. Plus **two** momentary pushbuttons (normally open) — no resistors needed, the RP2040's internal pull-ups handle both.
+Passives: 2× 1 kΩ, 2× 10 nF, 1× 470 Ω, 1× 100 µF electrolytic, and **two** bulk electrolytics — one at the amp (**1000 µF as built**) and one at the servo (470 µF or more).
+
+**The servo requires bypassing `RAW`'s 500 mA polyfuse** — see [Power](#power) below. Do this before wiring it. Plus **two** momentary pushbuttons (normally open) — no resistors needed, the RP2040's internal pull-ups handle both.
 
 Powered from a **USB power bank** into the KB2040's USB-C.
 
@@ -95,6 +98,7 @@ flowchart TB
     P_D4["<b>D4</b> · GP4"]
     P_D10["<b>D10</b> · GP10"]
     P_D2["<b>D2</b> · GP2"]
+    P_D6["<b>D6</b> · GP6"]
     P_D3["<b>D3</b> · GP3"]
   end
 
@@ -107,7 +111,7 @@ flowchart TB
     R2["R2<br/>1 kΩ"]
     N2(("node B"))
     C2["C2<br/>10 nF"]
-    CB1["C_bulk<br/>470 µF"]
+    CB1["C_bulk<br/>1000 µF"]
     subgraph SPK["STEMMA Speaker 3885 · PAM8302A"]
       direction TB
       S_SIG["<b>SIG</b> pad / white wire<br/>0–3 V in · AC-coupled 1.0 µF onboard"]
@@ -184,6 +188,21 @@ flowchart TB
     SW2["<b>Button 2 — trigger</b><br/>fires one interaction"]
   end
 
+  %% ============ SERVO ============
+  subgraph SRV["🔭 Periscope · TowerPro SG92R"]
+    direction TB
+    S_SIG2["<b>signal</b> · orange<br/>50 Hz, 500–2500 µs"]
+    S_PWR["<b>V+</b> · red<br/>4.8–6 V · 650 mA stall"]
+    S_GND2["<b>GND</b> · brown"]
+    CB3["C_bulk<br/>470 µF"]
+  end
+
+  P_D6 -->|"PIO-generated pulse train"| S_SIG2
+  RAW -->|"<b>fuse must be bypassed</b>"| S_PWR
+  RAW --> CB3
+  CB3 --> GND
+  S_GND2 --> GND
+
   P_D2 -->|"INPUT_PULLUP<br/>reads LOW when pressed"| SW1
   P_D3 -->|"INPUT_PULLUP<br/>reads LOW when pressed"| SW2
   SW1 --> GND
@@ -195,12 +214,14 @@ flowchart TB
   classDef npx fill:#0d2137,stroke:#42a5f5,stroke-width:2px,color:#bbdefb
   classDef dsp fill:#1a2e05,stroke:#9ccc65,stroke-width:2px,color:#dcedc8
   classDef btn fill:#33291a,stroke:#ffb74d,stroke-width:2px,color:#ffe0b2
+  classDef srv fill:#2b1a33,stroke:#ba68c8,stroke-width:2px,color:#e1bee7
   class USB,RAW,V3,GND pwr
-  class P_D8,P_D5,P_SCK,P_MOSI,P_D7,P_D4,P_D10,P_D2,P_D3 mcu
+  class P_D8,P_D5,P_SCK,P_MOSI,P_D7,P_D4,P_D10,P_D2,P_D3,P_D6 mcu
   class R1,R2,C1,C2,N1,N2,CB1,S_SIG,S_VCC,S_GND,S_POT,S_OUT aud
   class R3,CB2,NP1,NP2 npx
   class E_VIN,E_3V,E_GND,E_SCK,E_MOSI,E_MISO,E_DC,E_RST,E_TCS,E_SDCS,E_LITE,TFT dsp
   class SW1,SW2 btn
+  class S_SIG2,S_PWR,S_GND2,CB3 srv
 ```
 
 ### Connection table
@@ -216,8 +237,8 @@ Wire it from this, not from the diagram — the diagram shows topology, this sho
 | C1 leg 2           | GND                                          |
 | R2 leg 2           | node B — C2 (10 nF) leg 1, and speaker `SIG` |
 | C2 leg 2           | GND                                          |
-| KB2040 `RAW` (5 V) | speaker `+` (red), and C_bulk 470 µF `+`     |
-| C_bulk 470 µF `−`  | GND                                          |
+| KB2040 `RAW` (5 V) | speaker `+` (red), and C_bulk 1000 µF `+`    |
+| C_bulk 1000 µF `−` | GND                                          |
 | KB2040 `GND`       | speaker `−` (black)                          |
 
 STEMMA Speaker JST PH 3-pin: **white = SIG, red = +, black = −**. The same three signals are on the large alligator/sew pads, labelled `SIG` / `+` / `−`.
@@ -227,13 +248,15 @@ STEMMA Speaker JST PH 3-pin: **white = SIG, red = +, black = −**. The same thr
 | From              | To                                                      |
 | ----------------- | ------------------------------------------------------- |
 | KB2040 `D5` (GP5) | R3 (470 Ω) leg 1                                        |
-| R3 leg 2          | pixel 1 `DIN`                                           |
+| R3 leg 2          | pixel 1 `DIN` — **pixel 1 is the FRONT PSI**            |
 | KB2040 `3V`       | pixel 1 + 2 `+` (in parallel), and C_bulk 100 µF `+`    |
 | KB2040 `GND`      | pixel 1 + 2 `−` (in parallel), and C_bulk 100 µF `−`    |
-| pixel 1 `DOUT`    | pixel 2 `DIN`                                           |
+| pixel 1 `DOUT`    | pixel 2 `DIN` — pixel 2 is the REAR PSI                 |
 | pixel 2 `DOUT`    | leave unconnected                                       |
 
 Each pixel has 3 pads per side; the two sides mirror each other except that data is `DIN` on one side and `DOUT` on the other. Power and ground are common across both sides, so you can daisy-chain in either direction.
+
+**Chain order decides which PSI is which.** The pixel wired directly to `D5` through the 470 Ω is the front (red/blue); the one hanging off its `DOUT` is the rear (green/yellow). If that ends up backwards on the costume, swap `PIXEL_FRONT` and `PIXEL_REAR` in `src/config.h` rather than resoldering.
 
 **Display** — 5394 header straight into the breadboard, wire by silkscreen label:
 
@@ -253,6 +276,19 @@ Each pixel has 3 pads per side; the two sides mirror each other except that data
 
 Seven wires total. The EYESPI FPC connector carries these same signals and stays empty.
 
+**Periscope servo**
+
+| From               | To                                          |
+| ------------------ | ------------------------------------------- |
+| KB2040 `D6` (GP6)  | servo signal (**orange**)                   |
+| KB2040 `RAW` (5 V) | servo `V+` (**red**), and C_bulk 470 µF `+` |
+| C_bulk 470 µF `−`  | GND                                         |
+| KB2040 `GND`       | servo `GND` (**brown**)                     |
+
+SG92R wire colours: **orange = signal, red = V+, brown = ground.** Note this is not the same convention as the STEMMA speaker — brown, not black, is ground here.
+
+**`RAW`'s polyfuse must be bypassed first** (see [Power](#power)), and run the servo's ground back to the same point as everything else with as short and thick a wire as you can. Its current spikes go home through that wire, and a long thin one turns them into a voltage wobble that every other subsystem sees.
+
 **Buttons**
 
 | From              | To                                        |
@@ -270,11 +306,31 @@ Note this consumes `Wire1`. If I2C is ever needed, use the STEMMA QT port (`Wire
 
 ---
 
+## Power
+
+Everything on `RAW` runs through a **500 mA polyfuse**, including the 3.3 V regulator. Adding the servo puts it well over:
+
+| Load | Draw |
+| --- | --- |
+| 3.3 V rail (display, pixels, MCU) via the LDO | ~180 mA |
+| Speaker amp | ~350 mA on transients |
+| SG92R servo | ~150 mA moving, **650 mA stalled** |
+| **Worst case** | **~1180 mA** |
+
+The fix is on the back of the KB2040: **close the `USB+ → RAW` solder jumper.** That bypasses the fuse and allows up to 2 A from USB. The power bank's own protection takes over from the board's.
+
+Then fit the 470 µF across the servo's supply, right at the servo. Its inrush is what browns out everything else, and the cap supplies that locally instead of pulling it down a wire.
+
+A stall is the case that matters — 650 mA sustained, drawn until something moves or breaks. Keep `PERISCOPE_ANGLE_MIN` / `MAX` inside whatever the hinge mechanically allows so the horn never drives into a hard stop.
+
+---
+
 ## Before you power it on
 
 - **Tie every ground together** — MCU, speaker, pixels, display. A floating amp ground is the most common reason a PWM audio path hums or does nothing.
 - **Turn the speaker trim pot to minimum.** Gain is a fixed 24 dB; 3.3 V p-p with the pot up will clip hard into a 1 W speaker.
-- **Fit the 470 µF at the amp.** Class-D transients sag `RAW` enough to brown out the MCU, and it only shows up once audio and lights run together.
+- **Close the `USB+ → RAW` jumper** on the back of the KB2040 before wiring the servo. Without it the polyfuse trips under load.
+- **Fit both bulk caps** — 1000 µF at the amp, 470 µF at the servo. Class-D transients sag `RAW` enough to brown out the MCU, and it only shows up once audio and lights run together.
 - **Check pixel `V+` goes to `3V`, not `RAW`.** This is what lets 3.3 V logic drive them without a level shifter.
 - **Support the display panel mechanically.** Adafruit's warning: 5394 was designed for smartwatches where cover glass retains it, and "without something gently holding the screen down, the backlight can eventually peel away from the TFT." The dome faceplate needs to press lightly on the display face.
 

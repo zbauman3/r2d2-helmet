@@ -48,6 +48,8 @@ pio run -t upload          # build + flash
 pio device monitor         # serial, 115200
 ```
 
+**`pio` is not on `PATH` on this machine.** It ships inside the VS Code extension's virtualenv — use `~/.platformio/penv/bin/pio` or add that directory to `PATH`.
+
 The KB2040 has no physical reset button broken out for BOOTSEL. To force the bootloader: **double-tap the RST pad to GND**, or hold BOOT (GP11) while resetting. It enumerates as a `RPI-RP2` mass-storage volume; `pio run -t upload` copies a `.uf2` to it.
 
 If a bad build bricks the serial port, the double-tap always works — the bootloader lives in ROM.
@@ -62,7 +64,12 @@ lib_deps =
     adafruit/Adafruit BusIO
 ```
 
-`PWMAudio` ships with the core — do not add it to `lib_deps`.
+`PWMAudio` and `Servo` both ship with the core — do not add either to `lib_deps`.
+
+`Servo` is PIO-backed, so the pulse train is generated in hardware and keeps running with no CPU attention. That also means the `noInterrupts()` inside `NeoPixel::show()` cannot glitch it. Two traps in `attach()`, both silent:
+
+- `DEFAULT_MIN/MAX_PULSE_WIDTH` are 1000/2000 µs, roughly **half** an SG92R's travel. Pass the real range.
+- The 3-argument `attach(pin, min, max)` forwards `_valueUs`, which the constructor initialises to `DEFAULT_NEUTRAL_PULSE_WIDTH` (1500 µs) — mid-travel. Attaching commands that position immediately, so the servo slams from wherever it physically rests to 90° at full speed, through whatever the horn is connected to. **Always use the 4-argument form** and pass the angle you believe you are already at.
 
 ## Concurrency model
 
@@ -98,9 +105,9 @@ Keep the interface narrow — ideally a single "what should I be playing" value 
 
 | Resource | Total | Claimed |
 | --- | --- | --- |
-| PIO state machines | 8 | 1 by NeoPixel; `Servo` is also PIO-based if added |
+| PIO state machines | 8 | 1 by NeoPixel, 1 by `Servo` (periscope) |
 | PWM slices | 8 (2 ch. each) | slice 4 entirely, by `PWMAudio` |
 | DMA | 12 channels + timers | channels *and* a DMA timer, by `PWMAudio` |
-| GPIO | 20 (18 castellated + 2 on STEMMA QT) | 9 used |
+| GPIO | 20 (18 castellated + 2 on STEMMA QT) | 10 used |
 
 A PIO-driven display would not be free. Pin assignments and slice overlaps are in the `hardware` skill.
