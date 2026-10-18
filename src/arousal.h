@@ -48,4 +48,18 @@ uint8_t level(uint32_t now_ms);
 // exactly reads as one clock driving everything, which is the opposite of alive.
 uint16_t pace(uint16_t calm, uint16_t agitated, uint32_t now_ms);
 
+// pace() with the response curve pushed late: the result stays near `calm`
+// through the low bands and only accelerates as the level approaches the top.
+//
+// This exists because a linear read of a metric that STEPS is not the same as a
+// linear ramp. One trigger press is already AGITATION_STEP — nearly a quarter of
+// the range — so a linear subsystem is visibly fast after a single tap and has
+// little left to give for the next four. Squaring the input spends most of the
+// range on the presses that actually mean something.
+//
+// Use it where the first press should barely register. Subsystems whose calm and
+// agitated endpoints are close enough that the whole span reads as one gesture
+// should stay on plain pace().
+uint16_t pace_late(uint16_t calm, uint16_t agitated, uint32_t now_ms);
+
 }  // namespace arousal

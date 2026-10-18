@@ -107,6 +107,47 @@ uint32_t burst_until_ms = 0;
 mode::Mode last_mode = mode::Mode::Standby;
 mood::Mood last_mood = mood::Mood::Neutral;
 
+// --- Backlight -------------------------------------------------------------
+//
+// Faded rather than switched. A panel that snaps to black reads as a fault; one
+// that dims out reads as going to sleep, which is what it is doing.
+
+uint8_t bl_level = 0;  // what is actually on the pin
+uint8_t bl_from = 0;
+uint8_t bl_to = 0;
+uint32_t bl_start_ms = 0;
+bool bl_written = false;
+
+void backlight_to(uint8_t target, uint32_t now_ms) {
+  if (bl_written && target == bl_to) {
+    return;
+  }
+  bl_from = bl_level;
+  bl_to = target;
+  bl_start_ms = now_ms;
+}
+
+// Must run even in standby — the fade OUT happens there, so this cannot sit
+// behind the early return that skips the rest of the frame.
+void backlight_step(uint32_t now_ms) {
+  const uint32_t elapsed = now_ms - bl_start_ms;
+
+  uint8_t level;
+  if (elapsed >= config::BACKLIGHT_FADE_MS) {
+    level = bl_to;
+  } else {
+    const int32_t span = (int32_t)bl_to - (int32_t)bl_from;
+    level = (uint8_t)((int32_t)bl_from +
+                      (span * (int32_t)elapsed) / (int32_t)config::BACKLIGHT_FADE_MS);
+  }
+
+  if (level != bl_level || !bl_written) {
+    analogWrite(config::PIN_TFT_LITE, level);
+    bl_level = level;
+    bl_written = true;
+  }
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 // Weighted pick across an inclusive slice of the ramp. Weighting within the
@@ -238,12 +279,14 @@ void end_burst() {
 void on_mode_change(mode::Mode m, uint32_t now_ms) {
   end_burst();
 
+  backlight_to(m == mode::Mode::Active ? config::BACKLIGHT_ON : 0, now_ms);
+
   if (m == mode::Mode::Active) {
     scatter();
   } else {
-    // Standby cannot actually go dark: `Lite` is unconnected and pulled high on
-    // the 5394, so the backlight is always on and there is no GPIO to kill it.
-    // The dark palette entry is as close to "off" as this wiring allows.
+    // The backlight fade is what actually darkens the panel now, but the grid is
+    // still cleared: the fade back in on wake should reveal a blank screen, not
+    // the frozen frame from whenever standby was entered.
     fill_all(OFF);
   }
 
@@ -256,6 +299,16 @@ void on_mode_change(mode::Mode m, uint32_t now_ms) {
 }  // namespace
 
 void begin() {
+  // Backlight off before the panel is touched, so none of the initialisation
+  // garbage is ever visible. It fades up from here if we boot into active.
+  analogWriteFreq(config::BACKLIGHT_PWM_HZ);
+  analogWriteRange(255);
+  pinMode(config::PIN_TFT_LITE, OUTPUT);
+  analogWrite(config::PIN_TFT_LITE, 0);
+  bl_level = 0;
+  bl_to = 0;
+  bl_written = true;
+
   // Native portrait dimensions, then rotate — see config::TFT_NATIVE_W.
   tft.init(config::TFT_NATIVE_W, config::TFT_NATIVE_H);
   tft.setSPISpeed(config::TFT_SPI_HZ);
@@ -279,6 +332,8 @@ void begin() {
 }
 
 void update(uint32_t now_ms) {
+  backlight_step(now_ms);
+
   const mode::Mode m = mode::get();
   if (m != last_mode) {
     on_mode_change(m, now_ms);
@@ -339,8 +394,8 @@ void update(uint32_t now_ms) {
 }
 
 void flourish(uint32_t now_ms) {
-  // Standby stays dark on purpose: the trigger button is supposed to work
-  // without lighting the costume up first.
+  // Standby is inert, and main.cpp already gates on that. Kept as a guard so
+  // this module is correct on its own terms rather than by arrangement.
   if (mode::get() != mode::Mode::Active) {
     return;
   }

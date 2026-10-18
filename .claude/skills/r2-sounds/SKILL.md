@@ -99,7 +99,7 @@ There is also no software mute: `/SD` is tied to `VDD` on the STEMMA board, so t
 
 **Only button 2** (`D3`/GP3). Active mode — button 1 — animates the screen, lights, and periscope and is *deliberately silent*. There is no autonomous chirping, by design: sound is manual and deliberate, which is both more controllable in person and kinder to everyone standing nearby for an evening.
 
-Button 2 fires in either mode, so noise does not require lighting up first.
+Nothing makes a sound in standby. Standby is fully inert — only the `D2` hold that leaves it does anything at all.
 
 ### The scream is not a synth patch
 

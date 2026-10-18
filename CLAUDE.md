@@ -83,11 +83,13 @@ Presses count as one gesture while the gap between them stays under `BUTTON_MULT
 
 Counting works here precisely *because* a single press does nothing: with no immediate action to delay, waiting to see whether more presses arrive costs no latency. The same scheme on `D3` would push every chirp back by the width of the window, which is why `D3` is a plain tap.
 
-**`D3`/GP3 — trigger.** Fires a one-off interaction: a sound plus the screen, light and periscope flourish that goes with it. Repeated presses escalate agitation. It works in **both** modes, so you can bleep at someone without lighting up first.
+**`D3`/GP3 — trigger.** Fires a one-off interaction: a sound plus the screen, light and periscope flourish that goes with it. Repeated presses escalate agitation.
 
 **Entering and leaving active mode is announced by the periscope**, because the wearer cannot see the dome. Active runs a brisk lift out of park with a small settle; standby runs a slow lift-and-sag into park. The difference in tempo is the signal — it says which way the toggle went, not merely that something moved.
 
-In active mode the screen animates, the dome lights animate and the periscope scans. **Active mode is deliberately silent** — sound only ever comes from `D3` or an answer. In standby all of that is dark and still.
+In active mode the screen animates, the dome lights animate and the periscope scans. **Active mode is deliberately silent** — sound only ever comes from `D3` or an answer.
+
+**Standby is completely inert.** The backlight fades out, the pixels go dark, the servo stows and detaches, and every gesture except the mode hold does nothing at all. Sound used to fire in either mode, on the reasoning that you might want to bleep at someone without lighting up first; in practice that made standby feel like a mode that was still half awake.
 
 **Answers do not touch arousal.** The current level still colours their delivery, but they neither escalate it nor reset the exchange — an answer is communication, not frustration.
 
@@ -103,6 +105,8 @@ In active mode the screen animates, the dome lights animate and the periscope sc
 | Speech | recipe base | ~50% compressed |
 
 Each supplies its **own** endpoints. Sharing the metric is the point; sharing the actual rate is not — matching every subsystem's timing exactly reads as one clock driving everything, which is the opposite of alive. The periscope is deliberately the least responsive of the three.
+
+Each also picks its own **response curve**. `pace()` is linear; `pace_late()` squares the level so the low bands barely move and the range is spent on the top end. The PSIs use the late curve because a blinking light is the most conspicuous thing on the dome — one press is already `AGITATION_STEP`, nearly a quarter of the range, and linearly that put them close to full speed on the first tap with nothing left to escalate to.
 
 Reads must stay **pure** — several modules sample it every pass through `loop()`.
 

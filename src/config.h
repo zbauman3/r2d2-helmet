@@ -23,6 +23,7 @@ constexpr uint8_t PIN_TFT_DC      = 7;   // D7
 constexpr uint8_t PIN_TFT_RST     = 4;   // D4
 constexpr uint8_t PIN_TFT_CS      = 10;  // D10
 constexpr uint8_t PIN_SERVO       = 6;   // D6  — periscope servo
+constexpr uint8_t PIN_TFT_LITE    = 28;  // A2  — TFT backlight
 
 // SPI0 (SCK=GP18, MOSI=GP19) is the variant default, so the plain `SPI` object
 // is already on the right pins. Deliberately not listed here: naming them would
@@ -49,6 +50,17 @@ constexpr uint8_t TFT_ROTATION = 1;
 // Signal integrity, if it ever shows up, looks different — speckled or
 // wrong-coloured cells rather than clean geometric halves. Halve this if so.
 constexpr uint32_t TFT_SPI_HZ = 24000000;
+
+// Backlight. `Lite` is pulled high on the panel, so leaving this pin
+// unconnected simply gives a permanently lit screen — the wire is an
+// enhancement, not a dependency.
+//
+// 20 kHz is above hearing. Backlight drivers can whine at a few kHz, and a
+// costume that sings quietly to itself in standby would be worse than one that
+// just stays lit.
+constexpr uint32_t BACKLIGHT_PWM_HZ  = 20000;
+constexpr uint8_t  BACKLIGHT_ON      = 255;
+constexpr uint16_t BACKLIGHT_FADE_MS = 280;
 
 constexpr uint16_t SCREEN_W = 320;
 constexpr uint16_t SCREEN_H = 170;
@@ -143,6 +155,12 @@ constexpr uint8_t PIXEL_REAR  = 1;
 // PSIs sit on a colour for seconds at a time. The agitated range is faster but
 // still wider than the screen's, so the two subsystems accelerate together
 // without locking into the same rhythm.
+//
+// Interpolated with arousal::pace_late(), NOT pace(). A blinking light is the
+// most conspicuous thing on the dome, so a linear read of the level put it close
+// to full speed on the first trigger press with nowhere left to escalate to. The
+// late curve keeps the first press or two nearly as slow as calm and spends the
+// range on the flurries that are meant to look frantic.
 constexpr uint16_t PSI_FLIP_CALM_MIN_MS = 1100;
 constexpr uint16_t PSI_FLIP_CALM_MAX_MS = 3800;
 constexpr uint16_t PSI_FLIP_HOT_MIN_MS  = 320;
@@ -150,8 +168,18 @@ constexpr uint16_t PSI_FLIP_HOT_MAX_MS  = 1150;
 
 // Trigger reaction. Matches GRID_BURST_MS so the lights and the screen react
 // as one event rather than two overlapping ones.
-constexpr uint16_t PSI_BURST_MS      = 700;
-constexpr uint16_t PSI_BURST_FLIP_MS = 70;
+constexpr uint16_t PSI_BURST_MS = 700;
+
+// The burst flips at a FRACTION of the current idle rate rather than at a fixed
+// period, for the same reason the grid's burst does: a flat rate is a strobe
+// when he is calm and indistinguishable from the idle rhythm when he is not.
+// Proportional means the reaction always reads as "faster than he was", which is
+// what makes a press feel like it landed.
+//
+// The floor stops the fraction from outrunning the agitated end and turning the
+// burst into a flicker.
+constexpr uint8_t  PSI_BURST_FLIP_PCT      = 30;  // of the current short end
+constexpr uint16_t PSI_BURST_FLIP_FLOOR_MS = 90;
 
 // --- Periscope servo (TowerPro SG92R) --------------------------------------
 //

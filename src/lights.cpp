@@ -75,15 +75,29 @@ bool dirty = false;
 // faster AND with less spread — steadier and more urgent, the way a nervous
 // pulse is. The randomness within the range is what stops the two pixels from
 // locking to each other.
+//
+// pace_late() rather than pace(): see PSI_FLIP_CALM_MIN_MS.
 uint16_t flip_delay(uint32_t now_ms) {
+  const uint16_t lo = arousal::pace_late(config::PSI_FLIP_CALM_MIN_MS,
+                                         config::PSI_FLIP_HOT_MIN_MS, now_ms);
+
   if (bursting) {
-    return config::PSI_BURST_FLIP_MS;
+    // Proportional to the idle rate he is already running at, so the reaction
+    // is always a step up from wherever he was rather than a fixed strobe.
+    const uint16_t base =
+        max<uint16_t>((uint16_t)(lo * config::PSI_BURST_FLIP_PCT / 100),
+                      config::PSI_BURST_FLIP_FLOOR_MS);
+
+    // Jittered for the same reason the idle delay is a range rather than a
+    // number. A burst arms both pixels in the same instant, so a burst period
+    // with no spread holds them in perfect lockstep for its whole length —
+    // one circuit driving both, which is the single thing the two independent
+    // rhythms exist to avoid.
+    return base + (uint16_t)rng::below(base / 3);
   }
 
-  const uint16_t lo = arousal::pace(config::PSI_FLIP_CALM_MIN_MS,
-                                    config::PSI_FLIP_HOT_MIN_MS, now_ms);
-  const uint16_t hi = arousal::pace(config::PSI_FLIP_CALM_MAX_MS,
-                                    config::PSI_FLIP_HOT_MAX_MS, now_ms);
+  const uint16_t hi = arousal::pace_late(config::PSI_FLIP_CALM_MAX_MS,
+                                         config::PSI_FLIP_HOT_MAX_MS, now_ms);
   return lo + rng::below(hi - lo);
 }
 
@@ -219,14 +233,34 @@ void update(uint32_t now_ms) {
 }
 
 void flourish(uint32_t now_ms) {
-  // Standby stays dark on purpose — the trigger button is meant to work without
-  // lighting the costume up.
+  // Standby is inert, and main.cpp already gates on that. Kept as a guard so
+  // this module is correct on its own terms rather than by arrangement.
   if (mode::get() != mode::Mode::Active) {
     return;
   }
 
+  // A press that lands mid-burst EXTENDS it. It does not restart it.
+  //
+  // Restarting did two things that each tied the pixels to the button, and
+  // together made them a readout of it. The forced flip below is one flip per
+  // press by construction. And re-arming the timer on every press means that
+  // once presses arrive faster than the burst period — which they do, since the
+  // burst period is a fraction of an already-short one — the timer never
+  // reaches its deadline, so the pixels' own rhythm stops contributing and the
+  // forced flips are the only thing left. Press, flip, press, flip.
+  //
+  // Only the press that STARTS a flurry gets the immediate reaction now. The
+  // rest of the flurry is expressed the way every other subsystem expresses it:
+  // through arousal, which is climbing, and which the burst period is derived
+  // from.
+  const bool extending = bursting;
+
   bursting = true;
   burst_until_ms = now_ms + config::PSI_BURST_MS;
+
+  if (extending) {
+    return;  // no pixel changed, so there is nothing to clock out
+  }
 
   for (uint8_t i = 0; i < config::PIXEL_COUNT; ++i) {
     psi[i].showing_b = !psi[i].showing_b;

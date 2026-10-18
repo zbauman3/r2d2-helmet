@@ -89,6 +89,14 @@ void fire_scream(uint32_t now_ms) {
   Serial.println(F("SCREAM"));
 }
 
+// Standby is fully inert: nothing but the mode hold does anything. Sound used to
+// fire in either mode, on the reasoning that you might want to bleep at someone
+// without lighting up first — in practice that made standby feel like a mode
+// that was still half awake, which defeats the point of having one.
+bool awake() {
+  return mode::get() == mode::Mode::Active;
+}
+
 // Bench-only controls, kept even though the buttons work: once the costume is
 // assembled they are buried in the shell, and serial is the only way to drive
 // it from a laptop.
@@ -100,7 +108,17 @@ void poll_serial_control() {
   const int c = Serial.read();
   if (c == 'm' || c == 'M') {
     log_mode(mode::toggle());
-  } else if (c == 't' || c == 'T') {
+    return;
+  }
+
+  // Gated exactly like the buttons, so the bench path exercises the real
+  // behaviour rather than a more permissive version of it.
+  if (!awake()) {
+    Serial.println(F("(standby — press 'm' first)"));
+    return;
+  }
+
+  if (c == 't' || c == 'T') {
     fire_interaction(millis());
   } else if (c == 'y' || c == 'Y') {
     answer(true, millis());
@@ -149,16 +167,21 @@ void loop() {
     log_mode(mode::toggle());
   }
 
-  if (pressed.scream) {
-    fire_scream(now_ms);
-  } else if (pressed.answer_yes) {
-    answer(true, now_ms);
-  } else if (pressed.answer_no) {
-    answer(false, now_ms);
-  }
+  // Everything else is dead in standby. The gate lives here rather than inside
+  // each subsystem because this file is the one place that decides what a press
+  // means — the modules below it only report and render.
+  if (awake()) {
+    if (pressed.scream) {
+      fire_scream(now_ms);
+    } else if (pressed.answer_yes) {
+      answer(true, now_ms);
+    } else if (pressed.answer_no) {
+      answer(false, now_ms);
+    }
 
-  if (pressed.trigger_pressed) {
-    fire_interaction(now_ms);
+    if (pressed.trigger_pressed) {
+      fire_interaction(now_ms);
+    }
   }
 
   if (config::BENCH_SERIAL_CONTROL) {

@@ -87,4 +87,15 @@ uint16_t pace(uint16_t calm, uint16_t agitated, uint32_t now_ms) {
   return (uint16_t)((int32_t)calm + (span * level(now_ms)) / 255);
 }
 
+uint16_t pace_late(uint16_t calm, uint16_t agitated, uint32_t now_ms) {
+  // Squared in fixed point: (l/255)^2 * 255, which stays exact at both ends —
+  // 0 maps to 0 and 255 maps to 255 — so the endpoints a caller supplies are
+  // still the endpoints it gets.
+  const uint32_t l = level(now_ms);
+  const uint8_t shaped = (uint8_t)((l * l) / 255);
+
+  const int32_t span = (int32_t)agitated - (int32_t)calm;
+  return (uint16_t)((int32_t)calm + (span * shaped) / 255);
+}
+
 }  // namespace arousal

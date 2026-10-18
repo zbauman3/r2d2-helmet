@@ -16,3 +16,5 @@
 # so a fresh clone compiles and works without them.
 src/scream_pcm.h
 src/scream_pcm.cpp
+models/*
+!models/*.scad
