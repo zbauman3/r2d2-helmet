@@ -83,12 +83,16 @@
 //
 // AT 331 mm THE HALVES NO LONGER FIT a 250 mm bed — a half is D wide. The
 // quarters are the printable split; the halves are kept for a larger printer.
-part = "assembled";  // ["assembled","cutaway","half_front","half_back","quarter_1","quarter_2","quarter_3","quarter_4","eye_lens","fit_check"]
+part = "assembled";  // ["assembled","cutaway","half_front","half_back","quarter_1","quarter_2","quarter_3","quarter_4","eye_lens","fit_check","rim_ring","cradle_band","band_test","cradle_arm"]
 
 // Cosmetic detail is most of the render time and none of the fit. Turn it off
 // while iterating on the shell.
 show_features = true;
 show_panels   = true;
+
+// Interior mounting bosses. Off while iterating on the outside; they are the
+// only thing in the model that deliberately breaks the smooth interior.
+show_mounts = true;
 
 $fa = 2;
 $fs = 1.2;
@@ -113,9 +117,18 @@ $fs = 1.2;
 // height, which 331 provides with 23 mm to spare. Two unrelated constraints
 // landing on the same number is the reason to trust it.
 //
-// It was 240, chosen to print in halves on a 250 mm bed. That is given up: at
-// 331 the print is quartered. 71% of screen scale, against 52% before.
-dome_dia = 331;
+// 270 IS THE SIZE, AND HEIGHT IS WHAT SETS IT. Width was never the problem:
+// the head is 213 mm long and needs about 235 mm of bore. The dome is squashed
+// 0.93, so it buys only 0.93 mm of headroom per 2 mm of diameter — every
+// millimetre of crown clearance costs 2.15 mm on BOTH horizontal axes, and
+// that is what inflated an earlier draft to 331 and left a baseball-sized void
+// beside each ear.
+//
+// Three changes took the floor from 334 to 255: a straight skirt (see ring_h,
+// which buys height at no width), foam against the apex instead of a bolted
+// spider, and the band sitting above the ear top rather than on it. 270 is
+// that floor plus margin. 58% of screen scale.
+dome_dia = 270;
 
 // Vertical squash. Accurate: the real dome is 8.5" tall on 18.25" across.
 dome_z_scale = 0.93;
@@ -130,9 +143,18 @@ wall = 2.4;
 
 /* [Base ring] */
 
-ring_h     = 14;   // straight section below the dome
-ring_proud = 2.0;  // how far it stands out past the dome diameter
-ring_lap   = 2.0;  // how far it laps up over the dome
+// THE SKIRT IS STRUCTURAL, NOT COSMETIC. A straight cylinder below the dome
+// adds head room without adding diameter, which is the cheapest headroom in
+// the model — and on the real R2 the dome sits on a cylindrical body, so a
+// straight section below it reads correctly rather than as a spacer.
+//
+// It is NOT all proud. Standing 32 mm of collar out past the dome would read
+// as a thick band; only the bottom ring_band_h of it does, which is the thin
+// lip the reference actually shows.
+ring_h      = 32;   // straight section below the dome, flush with it
+ring_band_h = 12;   // of which this much, at the bottom, stands proud
+ring_proud  = 2.0;  // how far that band stands out past the dome diameter
+ring_lap    = 2.0;  // how far it laps up over the dome
 
 
 /* [Head fit] */
@@ -152,13 +174,13 @@ head_circ = 580;
 // tight on one axis and loose on the other.
 head_ratio = 155 / 195;
 
-// Vertical, from the band line straight up to the crown. Measured 120-130; the
-// middle of that is taken, since the band bears a few mm above the ear top.
+// Vertical, from the BAND LINE straight up to the crown.
 //
-// THIS IS THE NUMBER THAT BROKE THE FIT. The dome is 109 mm tall inside and the
-// skull above the band is 125, so the head cannot sit with its band at the rim
-// — it has to sit lower, which is what head_band_z and a taller ring are for.
-head_crown_h = 125;
+// Measured 120-130 from the top of the ear. The band does not bear on the ear
+// top, it bears about 10 mm above it, so 125 less 10 is what the cradle sees.
+// That 10 mm is worth 21 mm of dome diameter, which is why it is pulled out as
+// an assumption rather than buried in the measurement.
+head_crown_h = 115;
 
 // SOFT PADDING. A radial allowance all the way round, for the fabric liner and
 // a little slip on top of it. Radial, not circumferential: 4 mm here grows the
@@ -172,10 +194,9 @@ head_pad = 4.0;
 // top of the base ring. Dropping the band gains room above the crown and costs
 // it at the rim; pushing the head back trades front clearance for rear.
 //
-// Back at the rim. It was -30 when the dome was 240 and the head did not fit
-// under it; at 331 there is room, and a head sitting at the rim is both easier
-// to build a cradle for and better balanced than one slung below it.
-head_band_z   = 0;
+// One band half-height up from the skirt's bottom edge, so the hoop sits fully
+// inside the skirt instead of hanging below it where it would show.
+head_band_z   = -16;   // = -ring_h + band_h / 2
 head_offset_x = 0;
 
 
@@ -235,6 +256,98 @@ pie_count = 12;  // radial seams in the crown; one lands on the front centre
 //
 //  Three independent agreements is enough to trust the rest of the numbers.
 // ============================================================================
+
+/* [Head mount] */
+
+// THE RIM RING. One part solving two problems, which is why it is here rather
+// than being two.
+//
+//   · The cradle that carries the head needs somewhere rigid to bolt to, and
+//     the shell is a 2.4 mm skin that cannot take a fastener.
+//   · The dome now prints in four pieces, and four arcs glued edge to edge
+//     will crack at the seams under a kilogram of helmet.
+//
+// A segmented ring bolted inside the base does both. Its segments are offset
+// half a step from the shell's seams, so every segment BRIDGES one — the
+// fasteners that anchor the cradle are the same ones splicing the print.
+//
+// A matching spider at the apex does the same job at the top and carries the
+// crown pad. Not modelled yet.
+
+// Bosses: one pair per quarter, straddling each seam. Must stay a multiple of
+// 8, or the segments stop bridging.
+mount_count = 8;
+
+// Height up the straight bore. The bore is a cylinder, so a radial boss here
+// needs no compound angle — which is the whole reason the ring lives at the
+// base rather than on the curve.
+mount_z = -16;
+
+// Boss, sized for an M3 brass heat-set insert.
+boss_d        = 11;
+boss_h        = 5;     // how far it stands proud of the inner surface
+boss_insert_d = 4.2;   // melt diameter for a standard M3 insert
+boss_insert_h = 5.5;
+
+// Ring. Thickness is radial, height is up the bore. It seats against the FACE
+// of the bosses, not the shell, so the bosses set its diameter.
+// Radial thickness. Every millimetre here is a millimetre off the gap the
+// cradle arms have to span, and at 270 mm that gap is only 26 mm at the front
+// before the boss and the ring have taken their share.
+rim_ring_t   = 6;
+rim_ring_h   = 11;
+rim_ring_gap = 0.3;   // slip fit on the diameter
+rim_bolt_d   = 3.4;   // M3 clearance
+
+
+/* [Cradle] */
+
+// THE CRADLE IS WHAT ACTUALLY CARRIES THE HEAD. Three parts, because one part
+// would not print:
+//
+//   band   a closed hoop at the measured circumference. Closed, not split —
+//          the hoop is the member under load, and a joint in it would be the
+//          one place it fails. Fit is tuned with fabric inside it.
+//   arms   four small flat brackets, band out to the rim ring.
+//   crown  a spider under the apex, taking the vertical load.
+//
+// Load path: shell -> bosses -> rim ring -> arms -> band for position, and
+// shell -> apex pad -> crown spider for weight. No chin strap, so the crown
+// pad is structural rather than padding, and the band has to grip.
+
+band_t = 5;    // hoop wall
+band_h = 32;   // tall enough to spread the grip over a useful area
+
+// Where the arms land. On the ring segment CENTRES, so each segment carries
+// one arm bolt between its two splice bolts, and no hole lands on a seam.
+arm_az = [0, 90, 180, 270];
+
+arm_t = 4;
+arm_w = 18;
+
+// Lugs stand a fixed distance off the hoop wherever they are.
+//
+// A COMMON lug radius would make all four arms identical, which is tempting,
+// but on an ellipse it drives the side lugs 30 mm out and the band stops
+// fitting the bed — 239 mm square against a 210 mm axis. A fixed overhang
+// keeps the band at 243 x 201 and costs two arm lengths instead of one.
+band_lug_ext = 6;
+band_lug_h   = 5;
+band_lug_w   = 18;
+
+// THE CROWN IS FOAM, NOT A PART. A bolted spider was 10 mm of stack doing a
+// job the shell already does — the apex of a dome is its stiffest point, and
+// foam bonded straight to it spreads load just as well. Dropping it was worth
+// 18 mm of dome diameter.
+//
+// What stays is a thin disc inside the apex, there to splice the four print
+// quarters at the top the way the rim ring splices them at the bottom. The
+// foam pad goes on its underside.
+apex_pad_r  = 30;
+apex_pad_t  = 3;
+apex_bolt_r = 20;        // bolt circle, 3 off
+crown_foam  = 12;        // allowance for the pad; not modelled
+
 
 /* [Reference photo fit — pixels] */
 
@@ -699,6 +812,44 @@ holo_positions = [
      photo_lat(BACK_PHOTO, ref2_holo[1]), holo_r_dia],
 ];
 
+// --- Rim ring ---------------------------------------------------------------
+
+// Bosses stand proud of the bore, so the ring sits inboard of them.
+rim_ring_od = 2 * (inner_r - boss_h) - rim_ring_gap;
+rim_ring_id = rim_ring_od - 2 * rim_ring_t;
+
+// Shell seams are at 0 / 90 / 180 / 270; bosses sit half a step off so each
+// ring segment straddles one.
+mount_step = 360 / mount_count;
+function mount_az(i) = mount_step / 2 + i * mount_step;
+
+
+// --- Cradle -----------------------------------------------------------------
+
+// Radius of an ellipse along a ray from its centre — not the same as its
+// parametric point, which is what makes the lug radii worth deriving.
+function ell_r(ax, ay, th) =
+    ax * ay / sqrt(pow(ay * cos(th), 2) + pow(ax * sin(th), 2));
+
+band_ax = head_ax;            // inner face: the padded head
+band_ay = head_by;
+band_ax_o = band_ax + band_t;
+band_ay_o = band_ay + band_t;
+
+// Lug and arm radii, per azimuth — the hoop is an ellipse, so these differ
+// between the front/back pair and the side pair.
+function lug_r(az)  = ell_r(band_ax_o, band_ay_o, az) + band_lug_ext;
+function arm_in(az) = lug_r(az) - 6;             // bolt into the lug
+arm_r_out = rim_ring_id / 2 + rim_ring_t / 2;    // bolt into the ring
+
+// Both the ring's top face and the lugs' top faces sit here, so the arms are
+// flat plates lying across both.
+arm_z = mount_z + rim_ring_h / 2;
+
+apex_z = inner_r * dome_z_scale;   // interior apex
+crown_z = head_band_z + head_cz;   // top of the padded head
+
+
 // --- Checks -----------------------------------------------------------------
 
 assert(wall > 0.8, "wall is thinner than a printable shell");
@@ -712,6 +863,21 @@ assert(fld_window_long < fld_panel_long && fld_window_short < fld_panel_short,
 assert(fld_sink > fld_lip_t, "the display bezel would float off the surface");
 assert(eye_socket_h < eye_panel_proud + wall - 1.0,
        "the eye socket would leave under 1 mm of wall behind it");
+assert(mount_count % 8 == 0,
+       "mount_count must be a multiple of 8 so every ring segment bridges a seam");
+assert(boss_insert_h < boss_h + wall - 0.8,
+       "the insert would break through the outside of the shell");
+assert(rim_ring_t > rim_bolt_d + 2,
+       "the rim ring is too thin to take a bolt through it");
+assert(rim_ring_id / 2 > head_ax,
+       "the rim ring is narrower than the head that has to pass through it");
+assert(min([for (az = arm_az) arm_r_out - arm_in(az)]) > 10,
+       "the cradle arms are too short to be brackets");
+assert(2 * (band_ax_o + band_lug_ext) <= 250
+    && 2 * (band_ay_o + band_lug_ext) <= 210,
+       "the cradle band no longer fits the bed");
+assert(apex_z - apex_pad_t - crown_foam > crown_z,
+       "the apex splice disc and the foam pad do not fit above the head");
 
 echo(str("dome: ", dome_dia, " mm across, ", dome_rz, " mm tall, wall ", wall));
 echo(str("interior at the rim: ", dome_dia - 2 * wall, " mm"));
@@ -737,6 +903,9 @@ echo(str("head: ", head_circ, " mm round becomes ", 2 * head_a, " x ", 2 * head_
          " mm (cradle band ", head_circ_padded, " mm round)."));
 echo(str("clearance to the shell: ", head_gap_fore, " mm fore/aft, ",
          head_gap_side, " mm lateral, ", head_gap_top, " mm above the crown."));
+echo(str("crown stack: ", apex_z - crown_z, " mm from scalp to apex, of which ",
+         apex_pad_t, " is the splice disc, leaving ",
+         apex_z - crown_z - apex_pad_t, " mm for foam."));
 
 if (head_gap_top < 0)
     echo(str("FIT WARNING: the head is taller than the dome by ", -head_gap_top,
@@ -923,7 +1092,7 @@ module dome_panels() {
         cut_patch(c - 7, c + 7, lo, hi, panel_recess);
 }
 
-module base_ring() {
+module base_ring_OLD() {
     // Laps `ring_lap` above z = 0 rather than butting against the shell's
     // bottom face. Butting leaves a coincident-face pair, and lapping is what
     // the real dome ring does anyway — a band around the joint, not a spacer
@@ -932,6 +1101,16 @@ module base_ring() {
     // Solid, like the shell. interior() hollows it.
     translate([0, 0, -ring_h])
         cylinder(h = ring_h + ring_lap, r = dome_r + ring_proud);
+}
+
+// The skirt, in two pieces. The tall part is FLUSH with the dome — it is there
+// for head room, and standing all of it proud would read as a collar. Only the
+// bottom band steps out, which is the lip the reference shows.
+module base_ring() {
+    translate([0, 0, -ring_h])
+        cylinder(h = ring_h + ring_lap, r = dome_r);
+    translate([0, 0, -ring_h])
+        cylinder(h = ring_band_h, r = dome_r + ring_proud);
 }
 
 // THE INTERIOR, DEFINED ONCE.
@@ -974,6 +1153,127 @@ module head_keepout() {
     }
 }
 
+
+// --- Rim ring and its bosses ------------------------------------------------
+//
+// These are the one deliberate exception to the smooth interior, and they are
+// only defensible because the cradle now stands between them and the head.
+// They live in the bay, not against a scalp.
+//
+// Added AFTER interior() rather than inside it — see helmet(). Anything unioned
+// before that cut is removed by it, which is exactly what keeps the inside
+// smooth and exactly what has to be stepped around here.
+
+// One boss, radial, on the straight bore. The bore is a cylinder, so this needs
+// no compound angle and the insert goes in square to the surface.
+module mount_boss(az) {
+    translate([(inner_r + 2) * cos(az), (inner_r + 2) * sin(az), mount_z])
+        rotate([0, 0, az])
+            rotate([0, -90, 0])
+                difference() {
+                    cylinder(h = boss_h + 2, d = boss_d);
+                    // Insert bore, from the inboard face outward. Stops short
+                    // of the shell so the melt never shows on the outside.
+                    translate([0, 0, -face_eps])
+                        cylinder(h = boss_insert_h + face_eps, d = boss_insert_d);
+                }
+}
+
+module mount_bosses() {
+    for (i = [0 : mount_count - 1]) mount_boss(mount_az(i));
+}
+
+// The bolt holes, cut through both ring and boss in one pass so they cannot
+// disagree. Overshoots the shell on purpose; the outside is already closed.
+module mount_bolt(az) {
+    translate([inner_r * cos(az), inner_r * sin(az), mount_z])
+        rotate([0, 0, az])
+            rotate([0, 90, 0])
+                translate([0, 0, -(rim_ring_t + boss_h + 4)])
+                    cylinder(h = rim_ring_t + boss_h + 4, d = rim_bolt_d);
+}
+
+// One segment: a quarter of the ring, centred on a shell seam so it bridges it.
+module rim_ring_segment(j) {
+    centre = 90 * j;
+    difference() {
+        rotate([0, 0, centre - 45])
+            rotate_extrude(angle = 90)
+                translate([rim_ring_id / 2, mount_z - rim_ring_h / 2])
+                    square([rim_ring_t, rim_ring_h]);
+        for (s = [-1, 1]) mount_bolt(centre + s * mount_step / 2);
+    }
+}
+
+
+// --- The cradle -------------------------------------------------------------
+
+// The hoop, as a 2D profile. offset() rather than a second scaled ellipse: a
+// scaled ellipse is not a uniform offset of the first, and the wall would come
+// out thinner at the ends than at the sides.
+module band_profile() {
+    difference() {
+        offset(r = band_t) scale([band_ax, band_ay]) circle(r = 1, $fn = 160);
+        scale([band_ax, band_ay]) circle(r = 1, $fn = 160);
+    }
+}
+
+// A lug: a flat tab out to the common radius, its top face level with the
+// ring's so one flat arm can bridge the two.
+module band_lug(az) {
+    r0 = ell_r(band_ax_o, band_ay_o, az) - 2;
+    rotate([0, 0, az])
+        translate([0, 0, arm_z - band_lug_h])
+            difference() {
+                translate([r0, -band_lug_w / 2, 0])
+                    cube([lug_r(az) - r0, band_lug_w, band_lug_h]);
+                translate([arm_in(az), 0, -face_eps])
+                    cylinder(h = boss_insert_h + face_eps, d = boss_insert_d);
+            }
+}
+
+module cradle_band() {
+    union() {
+        translate([0, 0, head_band_z - band_h / 2])
+            linear_extrude(band_h) band_profile();
+        for (az = arm_az) band_lug(az);
+    }
+}
+
+// One arm. A flat plate lying across the ring and the lug, bolted down into
+// both — every fastener in the cradle is vertical, which is what keeps these
+// brackets trivial to print and to fit.
+module cradle_arm(az) {
+    difference() {
+        hull()
+            for (r = [arm_in(az), arm_r_out])
+                translate([r, 0, 0]) cylinder(h = arm_t, d = arm_w);
+        for (r = [arm_in(az), arm_r_out])
+            translate([r, 0, -face_eps])
+                cylinder(h = arm_t + 2 * face_eps, d = rim_bolt_d);
+    }
+}
+
+module cradle_arms() {
+    for (az = arm_az)
+        rotate([0, 0, az]) translate([0, 0, arm_z]) cradle_arm(az);
+}
+
+// --- The crown --------------------------------------------------------------
+
+// A flat disc inside the apex. It splices the four print quarters at the top,
+// and its underside is what the foam crown pad is bonded to. Flat on purpose:
+// three separate bosses on the curve would put their faces on a cone.
+module apex_pad() {
+    translate([0, 0, apex_z - apex_pad_t])
+        difference() {
+            cylinder(h = apex_pad_t + 4, r = apex_pad_r);
+            for (i = [0:2])
+                rotate([0, 0, 120 * i])
+                    translate([apex_bolt_r, 0, -face_eps])
+                        cylinder(h = boss_insert_h + face_eps, d = boss_insert_d);
+        }
+}
 
 // ============================================================================
 //  5. FEATURES
@@ -1245,6 +1545,24 @@ module helmet() {
     }
 }
 
+// The shell, plus the only things allowed to stand inside it.
+//
+// The bosses are unioned OUTSIDE helmet()'s difference because interior() would
+// otherwise shave them flush — that cut is what guarantees the smooth inside,
+// so the mounts have to be added past it rather than exempted from it. Their
+// bolt holes are then cut through the result, which is also what keeps them
+// aligned with the ring's.
+module helmet_mounted() {
+    difference() {
+        union() {
+            helmet();
+            if (show_mounts) { mount_bosses(); apex_pad(); }
+        }
+        if (show_mounts)
+            for (i = [0 : mount_count - 1]) mount_bolt(mount_az(i));
+    }
+}
+
 
 // ============================================================================
 //  7. OUTPUT
@@ -1266,23 +1584,23 @@ module keep_half(keep) {
 }
 
 if (part == "assembled") {
-    helmet();
+    helmet_mounted();
 
 } else if (part == "cutaway") {
     // A quarter removed rather than a half, so the interior is visible while
     // the silhouette is still recognisable.
     difference() {
-        helmet();
+        helmet_mounted();
         translate([0, -dome_dia, -ring_h - 1])
             cube([dome_dia, dome_dia, dome_dia]);
     }
 
 } else if (part == "half_front") {
-    keep_half(1) helmet();
+    keep_half(1) helmet_mounted();
 
 } else if (part == "half_back") {
     // Rotated flat-face-down so it is ready to slice without reorienting.
-    rotate([0, 0, 180]) keep_half(-1) helmet();
+    rotate([0, 0, 180]) keep_half(-1) helmet_mounted();
 
 } else if (quarter_index(part) >= 0) {
     // One quarter, laid on a cut face.
@@ -1294,7 +1612,7 @@ if (part == "assembled") {
     rotate([90, 0, 0])
         rotate([0, 0, -90 * quarter_index(part)])
             intersection() {
-                helmet();
+                helmet_mounted();
                 translate([0, 0, -ring_h - 1])
                     cube([dome_dia, dome_dia, dome_dia]);
             }
@@ -1303,11 +1621,43 @@ if (part == "assembled") {
     // The cutaway with the head ghosted in. PREVIEW THIS (F5) — the keep-out is
     // drawn with a transparent colour, and a full render discards alpha.
     difference() {
-        helmet();
+        helmet_mounted();
         translate([0, -dome_dia, -ring_h - 1])
             cube([dome_dia, dome_dia, dome_dia]);
     }
     color("salmon", 0.35) head_keepout();
+    color("steelblue", 0.6) {
+        for (j = [0:3]) rim_ring_segment(j);
+        cradle_band();
+        cradle_arms();
+    }
+
+} else if (part == "rim_ring") {
+    // One segment. Print four; they are identical, the bolt holes are
+    // symmetric about the seam.
+    //
+    // Already flat — it is a flat annulus. Turned a quarter so its long axis
+    // runs along X: the arc is 222 mm across, which does not fit a 210 mm bed
+    // the other way round.
+    rotate([0, 0, 90]) rim_ring_segment(0);
+
+} else if (part == "cradle_band") {
+    cradle_band();
+
+} else if (part == "band_test") {
+    // A short slice of the hoop, no lugs — a fit gauge, not a part.
+    //
+    // What it actually tests is head_pad. The hoop is cut at head_circ plus a
+    // radial head_pad, which is 605 mm round against a measured 580 — 25 mm of
+    // slack for fabric. Too loose or too tight, change head_pad and reprint
+    // this rather than the band.
+    linear_extrude(8) band_profile();
+
+} else if (part == "cradle_arm") {
+    // Both lengths, side by side: the long one spans to the side of the hoop,
+    // the short one to its end. Print this plate twice for a set of four.
+    translate([-arm_in(0),  0,              0]) cradle_arm(0);
+    translate([-arm_in(90), arm_w + 4, 0]) cradle_arm(90);
 
 } else if (part == "eye_lens") {
     eye_lens();
